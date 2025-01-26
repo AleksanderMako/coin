@@ -28,6 +28,7 @@ DTYPE_BIT_SIZE: Dict[dtype, int] = {
 }
 
 
+
 def to_coordinates_and_features(img):
     """Converts an image to a set of coordinates and features.
 
