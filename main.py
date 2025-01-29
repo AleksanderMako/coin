@@ -54,6 +54,7 @@ for i in range(min_id, max_id + 1):
     # Load image
     img = imageio.imread(f"kodak-dataset/kodim{str(i).zfill(2)}.png")
     img = transforms.ToTensor()(img).float().to(device, dtype)
+    print(img.shape)
 
     # Setup model
     func_rep = Siren(
