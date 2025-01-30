@@ -39,7 +39,7 @@ torch.cuda.manual_seed_all(args.seed)
 _,_,train_dataset,test_dataset = cifar10loader.loadcifar10()
 
 if args.full_dataset:
-    min_id, max_id = 0, len(test_dataset)  # Kodak dataset runs from kodim01.png to kodim24.png
+    min_id, max_id = 0, len(test_dataset)-1  # Kodak dataset runs from kodim01.png to kodim24.png
 else:
     min_id, max_id = args.image_id, args.image_id
 
