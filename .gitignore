@@ -1,0 +1,4 @@
+data/
+cifar_10_full_dataset/**/*.png
+cifar_10_full_dataset/**/*.json
+# cifar_10_full_dataset/**/*.pt
