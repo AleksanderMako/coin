@@ -1,4 +1,8 @@
 data/
 cifar_10_full_dataset/**/*.png
 cifar_10_full_dataset/**/*.json
+__pycache__/
+*.pyc
+*.pyo
+
 # cifar_10_full_dataset/**/*.pt
