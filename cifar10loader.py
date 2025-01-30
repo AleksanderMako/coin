@@ -49,9 +49,8 @@ def loadcifar10():
     )
     return train_loader,test_loader,train_dataset,test_dataset
 
-def loadImageI (i):
-    train_loader,test_loader,train_dataset,test_dataset = loadcifar10()
+def loadImageI (i,dataset):
 
-    img,label = train_dataset[i]
+    img,label = dataset[i]
     print( img.shape)
     return img

@@ -36,9 +36,10 @@ print("device is "+device.type)
 # Set random seeds
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
+_,_,train_dataset,test_dataset = cifar10loader.loadcifar10()
 
 if args.full_dataset:
-    min_id, max_id = 1, 24  # Kodak dataset runs from kodim01.png to kodim24.png
+    min_id, max_id = 0, len(test_dataset)  # Kodak dataset runs from kodim01.png to kodim24.png
 else:
     min_id, max_id = args.image_id, args.image_id
 
@@ -49,12 +50,13 @@ results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
 if not os.path.exists(args.logdir):
     os.makedirs(args.logdir)
 
+
 # Fit images
 for i in range(min_id, max_id + 1):
     print(f'Image {i}')
 
     # Load image
-    img = cifar10loader.loadImageI(i).to(device, dtype)
+    img = cifar10loader.loadImageI(i,test_dataset).to(device, dtype)
      #torch.Size([3, 512, 768])
 
     # Setup model
