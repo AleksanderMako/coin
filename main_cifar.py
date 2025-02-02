@@ -13,6 +13,7 @@ from training import Trainer
 import cifar10loader 
 
 # python main_cifar.py -ld cifar_10_full_dataset -fd -nl 5 -lss 20 -ni 250
+#python main_cifar.py -ld cifar_10_nl5_lss28_ni3000 -iid 3  -nl 5 -lss 22 -ni 3000
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
 parser.add_argument("-ni", "--num_iters", help="Number of iterations to train for", type=int, default=1000)
