@@ -4,5 +4,5 @@ cifar_10_full_dataset/**/*.json
 __pycache__/
 *.pyc
 *.pyo
-
+cifar_10_nl5_lss28/
 # cifar_10_full_dataset/**/*.pt
