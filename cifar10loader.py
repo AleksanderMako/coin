@@ -52,5 +52,4 @@ def loadcifar10():
 def loadImageI (i,dataset):
 
     img,label = dataset[i]
-    print( img.shape)
     return img
