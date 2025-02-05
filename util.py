@@ -99,3 +99,86 @@ def get_clamped_psnr(img, img_recon):
 
 def mean(list_):
     return np.mean(list_)
+
+def to_patch_coordinates_and_features(img, k):
+    """Converts an image to a set of patch coordinates and features.
+    
+    Args:
+        img (torch.Tensor): Shape (channels, height, width).
+        k (int): Size of the square patch (k x k).
+    
+    Returns:
+        coordinates (torch.Tensor): Shape (num_patches, 2) with coordinates in [-1, 1].
+        features (torch.Tensor): Shape (num_patches, channels * k * k) with patch features.
+    """
+    C, H, W = img.shape
+    H_patch = H - k + 1
+    W_patch = W - k + 1
+    
+    # Generate top-left coordinates of all patches
+    y_indices = torch.arange(H_patch)
+    x_indices = torch.arange(W_patch)
+    
+    # Compute center coordinates of each patch
+    y_centers = y_indices.float() + (k - 1) / 2.0
+    x_centers = x_indices.float() + (k - 1) / 2.0
+    
+    # Create grid of center coordinates
+    grid_y, grid_x = torch.meshgrid(y_centers, x_centers, indexing='ij')
+    coordinates = torch.stack([grid_y.flatten(), grid_x.flatten()], dim=1)
+    
+    # Normalize coordinates to [-1, 1] as in the original function
+    coordinates[:, 0] = (coordinates[:, 0] / (H - 1) - 0.5) * 2  # Normalize y
+    coordinates[:, 1] = (coordinates[:, 1] / (W - 1) - 0.5) * 2  # Normalize x
+    
+    # Extract k x k patches from the image
+    patches = img.unfold(1, k, 1).unfold(2, k, 1)  # Shape: (C, H_patch, W_patch, k, k)
+    
+    # Permute and reshape to (num_patches, C*k*k)
+    features = patches.permute(1, 2, 0, 3, 4).reshape(-1, C * k * k)
+    
+    return coordinates, features
+
+def reconstruct_from_patches(features, original_shape, k):
+    """Reconstruct an image from patch features.
+    
+    Args:
+        features (torch.Tensor): Shape (num_patches, channels * k * k).
+        original_shape (tuple): (channels, height, width) of the target image.
+        k (int): Patch size (k x k).
+    
+    Returns:
+        img_recon (torch.Tensor): Reconstructed image of shape `original_shape`.
+    """
+    C, H, W = original_shape
+    H_patch = H - k + 1
+    W_patch = W - k + 1
+
+    # Reshape features to (H_patch, W_patch, C, k, k)
+    patches = features.reshape(H_patch, W_patch, C, k, k)
+    
+    # Fold patches back into the image
+    # Step 1: Permute to (C, k, k, H_patch, W_patch) for compatibility with fold
+    patches = patches.permute(2, 3, 4, 0, 1)  # (C, k, k, H_patch, W_patch)
+    
+    # Step 2: Fold patches into the image shape (C, H, W)
+    img_recon = torch.nn.functional.fold(
+        patches.reshape(1, C * k * k, -1),  # (batch=1, C*k*k, num_patches)
+        output_size=(H, W),
+        kernel_size=k,
+        stride=1  # Same stride used in patch extraction
+    ).squeeze(0)  # Remove batch dimension
+    
+    # Step 3: Normalize overlapping regions
+    # Create a mask to count overlaps (for averaging)
+    ones = torch.ones_like(patches)
+    norm_mask = torch.nn.functional.fold(
+        ones.reshape(1, C * k * k, -1),
+        output_size=(H, W),
+        kernel_size=k,
+        stride=1
+    ).squeeze(0)
+    
+    img_recon = img_recon / norm_mask  # Average overlapping contributions
+    
+    return img_recon

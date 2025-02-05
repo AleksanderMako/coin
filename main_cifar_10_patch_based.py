@@ -67,7 +67,7 @@ for i in range(min_id, max_id + 1):
     func_rep = Siren(
         dim_in=2,
         dim_hidden=args.layer_size,
-        dim_out=3,
+        dim_out=27,
         num_layers=args.num_layers,
         final_activation=torch.nn.Identity(),
         w0_initial=args.w0_initial,
@@ -76,7 +76,7 @@ for i in range(min_id, max_id + 1):
 
     # Set up training
     trainer = Trainer(func_rep, lr=args.learning_rate)
-    coordinates, features = util.to_coordinates_and_features(img)
+    coordinates, features = util.to_patch_coordinates_and_features(img,3)
     coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
@@ -101,7 +101,7 @@ for i in range(min_id, max_id + 1):
 
     # Save full precision image reconstruction
     with torch.no_grad():
-        img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+        img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,3)
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
 
     # Convert model and coordinates to half precision. Note that half precision
@@ -117,7 +117,7 @@ for i in range(min_id, max_id + 1):
 
         # Compute image reconstruction and PSNR
         with torch.no_grad():
-            img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1).float()
+            img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,3)
             hp_psnr = util.get_clamped_psnr(img_recon, img)
             save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/hp_reconstruction_{i}.png')
             print(f'Half precision psnr: {hp_psnr:.2f}')
@@ -145,3 +145,4 @@ with open(args.logdir + f'/results_mean.json', 'w') as f:
 print('Aggregate results:')
 print(f'Full precision, bpp: {results_mean["fp_bpp"]:.2f}, psnr: {results_mean["fp_psnr"]:.2f}')
 print(f'Half precision, bpp: {results_mean["hp_bpp"]:.2f}, psnr: {results_mean["hp_psnr"]:.2f}')
+print(f"dircotry is {args.logdir}")

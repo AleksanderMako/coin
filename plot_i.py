@@ -26,4 +26,4 @@ def plot(i):
     plt.title(f"Label: image {i}")
     plt.axis('off')
     plt.savefig("my_image.png") 
-plot(3)
+plot(110)
