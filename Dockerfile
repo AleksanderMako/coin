@@ -21,4 +21,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Set default command
-CMD ["python", "weights_collector.py"]
+# CMD ["python", "weights_collector.py"]
+CMD ["python", "main_cifar.py","-iid","5","-nl","5","-lss","28","-ld","iid_5_nl5_lss28_ni100","-ni","100"]

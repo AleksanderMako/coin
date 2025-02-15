@@ -45,6 +45,36 @@ def to_coordinates_and_features(img):
     features = img.reshape(img.shape[0], -1).T
     return coordinates, features
 
+def to_coordinates_and_features_and_time(img, t, k):
+    """Converts an image to a set of coordinates (with time step) and features.
+
+    Args:
+        img (torch.Tensor): Shape (channels, height, width).
+        t (int): Time step (1 <= t <= k).
+        k (int): Total number of time steps.
+    """
+    # Generate original spatial coordinates
+    coordinates = torch.ones(img.shape[1:]).nonzero(as_tuple=False).float()
+    
+    # Normalize spatial coordinates to [-1, 1]
+    coordinates = coordinates / (torch.tensor(img.shape[1:]) - 1).unsqueeze(0)  # Handle division per dimension
+    coordinates = coordinates - 0.5
+    coordinates *= 2
+
+    # Normalize time step to [-1, 1]
+    if k == 1:
+        t_normalized = 0.0  # Handle single timestep case
+    else:
+        t_normalized = ((t - 1) / (k - 1) - 0.5) * 2
+    
+    # Add time dimension to coordinates
+    time_column = torch.full((coordinates.shape[0], 1), t_normalized)
+    coordinates = torch.cat([coordinates, time_column], dim=1)
+
+    # Convert image to features
+    features = img.reshape(img.shape[0], -1).T
+    
+    return coordinates, features
 
 def model_size_in_bits(model):
     """Calculate total number of bits to store `model` parameters and buffers."""
