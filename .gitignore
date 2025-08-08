@@ -8,4 +8,15 @@ cifar_10_nl5_lss28_ni250/
 cifar_10*
 nl_*
 ni_*
+kodak_nl*
+kodak_dataset*
+coarse*
+comparison/
+patches/
+risidual/
+ycbcr/
+channel_factorisation/
+cutom_loss_fn/
+frequencyspace/
+luma_exploit/
 # cifar_10_full_dataset/**/*.pt

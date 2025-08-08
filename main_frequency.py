@@ -7,14 +7,12 @@ import random
 import torch
 import util
 from siren import Siren
-from siren import SirenWithCorrectorNet
 from torchvision import transforms
 from torchvision.utils import save_image
 from training import Trainer
 import time
-from training import normalize_log2_scale
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/normal_procedure/ni_5k_lss28_nl10_iid5 -se 3456
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/ni_5k_lss28_nl9_iid5 -se 3456 -ips 2
+from util import apply_idct2, apply_dct2
+from dct2net import Coord2DCTNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
@@ -27,7 +25,6 @@ parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", 
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
 parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
-parser.add_argument("-ips", "--input_pad_size", help="input pad size", type=int, default=0)
 
 args = parser.parse_args()
 
@@ -51,7 +48,7 @@ results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
     os.makedirs(args.logdir)
-input_pad_size = args.input_pad_size
+
 # Fit images
 for i in range(min_id, max_id + 1):
     print(f'Image {i}')
@@ -64,24 +61,24 @@ for i in range(min_id, max_id + 1):
     print(img.shape)
 
     # Setup model
-    func_rep = Siren(
-        dim_in=2+input_pad_size,
-        dim_hidden=args.layer_size,
-        dim_out=3,
-        num_layers=args.num_layers,
-        final_activation=torch.nn.Identity(),
-        w0_initial=args.w0_initial,
-        w0=args.w0
-    ).to(device)
-
+    func_rep = Coord2DCTNet(num_frequencies=4, 
+                            hidden_dim=args.layer_size, 
+                            num_layers=args.num_layers, 
+                            output_dim=3).to(device)
+    
+    # func_rep = Siren(
+    #         dim_in=2,
+    #         dim_hidden=args.layer_size,
+    #         dim_out=3,
+    #         num_layers=args.num_layers,
+    #         final_activation=torch.nn.Identity(),
+    #         w0_initial=args.w0_initial,
+    #         w0=args.w0
+    #     ).to(device)
     # Set up training
     trainer = Trainer(func_rep, lr=args.learning_rate)
     coordinates, features = util.to_coordinates_and_features(img)
     coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
-    if input_pad_size > 0: 
-        pad = normalize_log2_scale(1.0)
-        pad = pad.expand(coordinates.shape[0],input_pad_size)
-        coordinates = torch.cat([coordinates,pad],dim=-1)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
     model_size = util.model_size_in_bits(func_rep) / 8000.
@@ -90,17 +87,11 @@ for i in range(min_id, max_id + 1):
     print(f'Full precision bpp: {fp_bpp:.2f}')
 
     # Train model in full precision
-    
     start_time = time.time()
-    trainer.train(coordinates, features, num_iters=args.num_iters)
-    # trainer.train_with_maml_2(img,0,500,2,8192,16384,10)
-    # trainer.train_with_correction_net(coordinates, features, num_iters=args.num_iters,img=img,correction_cycles=1000)
-    # trainer.train_in_dct(img,coordinates,features,args.num_iters)
-    # trainer.train_in_fft_and_rgb(img,coordinates,features,args.num_iters)
-    # trainer.train_with_laplacian_pyramid(img,coordinates,features,args.num_iters)
-    # trainer.coarse_to_fine_grained_training(img,args.num_iters,5000,5000)
-   
-    #{"fp_bpp": [0.608642578125], "hp_bpp": [0.3043212890625], "fp_psnr": [24.78053569793701], "hp_psnr": [24.72663402557373]}
+    k = 30
+
+    trainer.frequency_space(img,args.num_iters,k)
+
     print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
     end_time = time.time() 
     elapsed_seconds = end_time - start_time
@@ -119,14 +110,21 @@ for i in range(min_id, max_id + 1):
 
     # Save full precision image reconstruction
     with torch.no_grad():
-        img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+        frequency_domain = apply_dct2(img_tensor=img)
+        target = frequency_domain[:,:k,:k]
+        coordinates, features = util.to_coordinates_and_features(target)
+        coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
+        recon_frequencies = func_rep(coordinates).reshape(target.shape[1], target.shape[2], 3).permute(2, 0, 1)
+        recon_frequency_space = torch.zeros_like(img)
+        recon_frequency_space[:,:k,:k] = recon_frequencies
+        img_recon = apply_idct2(recon_frequency_space)
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
 
     # Convert model and coordinates to half precision. Note that half precision
     # torch.sin is only implemented on GPU, so must use cuda
     if torch.cuda.is_available():
         func_rep = func_rep.half().to('cuda')
-        coordinates = coordinates.half().to('cuda')
+        
 
         # Calculate model size in half precision
         hp_bpp = util.bpp(model=func_rep, image=img)
@@ -135,7 +133,18 @@ for i in range(min_id, max_id + 1):
 
         # Compute image reconstruction and PSNR
         with torch.no_grad():
-            img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1).float()
+
+            frequency_domain = apply_dct2(img_tensor=img)
+            target = frequency_domain[:,:k,:k]
+            coordinates, features = util.to_coordinates_and_features(target)
+            coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
+            coordinates = coordinates.half().to('cuda')
+
+            recon_frequencies = func_rep(coordinates).reshape(target.shape[1], target.shape[2], 3).permute(2, 0, 1)
+            recon_frequency_space = torch.zeros_like(img)
+            recon_frequency_space[:,:k,:k] = recon_frequencies
+            img_recon = apply_idct2(recon_frequency_space)
+
             hp_psnr = util.get_clamped_psnr(img_recon, img)
             save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/hp_reconstruction_{i}.png')
             print(f'Half precision psnr: {hp_psnr:.2f}')

@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch._C import dtype
 from typing import Dict
+from scipy.fft import dctn, idctn
 
 
 DTYPE_BIT_SIZE: Dict[dtype, int] = {
@@ -212,3 +213,58 @@ def reconstruct_from_patches(features, original_shape, k):
     img_recon = img_recon / norm_mask  # Average overlapping contributions
     
     return img_recon
+
+
+def apply_dct2(img_tensor):
+    """
+    Applies 2D DCT-II (orthonormal normalization) to each channel of an image tensor.
+    
+    Args:
+        img_tensor (torch.Tensor): Input image tensor of shape (C, H, W)
+        
+    Returns:
+        torch.Tensor: DCT-II coefficients tensor of shape (C, H, W)
+    """
+    # Detach, move to CPU, and convert to numpy
+    img_np = img_tensor.detach().cpu().numpy()
+    
+    # Transpose to (H, W, C) for channel-wise processing
+    img_np = img_np.transpose(1, 2, 0)
+    dct_np = np.zeros_like(img_np)
+    
+    # Apply DCT-II to each channel
+    for c in range(img_np.shape[2]):
+        dct_np[:, :, c] = dctn(img_np[:, :, c], type=2, norm='ortho', axes=(0, 1))
+    
+    # Convert back to PyTorch tensor with original device/dtype
+    return torch.from_numpy(dct_np.transpose(2, 0, 1)).to(
+        device=img_tensor.device,
+        dtype=img_tensor.dtype
+    )
+
+def apply_idct2(dct_coeffs):
+    """
+    Applies inverse 2D DCT-II (orthonormal normalization) to recover the original image from DCT coefficients.
+    
+    Args:
+        dct_coeffs (torch.Tensor): DCT coefficients tensor of shape (C, H, W)
+        
+    Returns:
+        torch.Tensor: Reconstructed image tensor of shape (C, H, W)
+    """
+    # Detach, move to CPU, and convert to numpy
+    dct_np = dct_coeffs.detach().cpu().numpy()
+    
+    # Transpose to (H, W, C) for channel-wise processing
+    dct_np = dct_np.transpose(1, 2, 0)
+    img_np = np.zeros_like(dct_np)
+    
+    # Apply inverse DCT-II to each channel
+    for c in range(dct_np.shape[2]):
+        img_np[:, :, c] = idctn(dct_np[:, :, c], type=2, norm='ortho', axes=(0, 1))
+    
+    # Convert back to PyTorch tensor with original device/dtype
+    return torch.from_numpy(img_np.transpose(2, 0, 1)).to(
+        device=dct_coeffs.device,
+        dtype=dct_coeffs.dtype
+    )

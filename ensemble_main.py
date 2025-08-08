@@ -7,18 +7,21 @@ import random
 import torch
 import util
 from siren import Siren
-from siren import SirenWithCorrectorNet
+from time_siren import TimeSiren
+from time_siren import risidual_prediction
+from time_siren import risidual_prediction_with_half_coords
 from torchvision import transforms
 from torchvision.utils import save_image
 from training import Trainer
-import time
-from training import normalize_log2_scale
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/normal_procedure/ni_5k_lss28_nl10_iid5 -se 3456
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/ni_5k_lss28_nl9_iid5 -se 3456 -ips 2
+import cifar10loader 
+
+# python main_cifar.py -ld cifar_10_full_dataset -fd -nl 5 -lss 20 -ni 250
+#python main_cifar.py -ld cifar_10_nl5_lss28_ni3000 -iid 3  -nl 5 -lss 22 -ni 3000
+# python risidual_main.py -iid 5 -nl 3 -lss 48 -ni 500
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
-parser.add_argument("-ni", "--num_iters", help="Number of iterations to train for", type=int, default=50000)
+parser.add_argument("-ni", "--num_iters", help="Number of iterations to train for", type=int, default=1000)
 parser.add_argument("-lr", "--learning_rate", help="Learning rate", type=float, default=2e-4)
 parser.add_argument("-se", "--seed", help="Random seed", type=int, default=random.randint(1, int(1e6)))
 parser.add_argument("-fd", "--full_dataset", help="Whether to use full dataset", action='store_true')
@@ -27,21 +30,25 @@ parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", 
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
 parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
-parser.add_argument("-ips", "--input_pad_size", help="input pad size", type=int, default=0)
 
 args = parser.parse_args()
-
+if not args.full_dataset:
+    args.logdir = f'risidual/nl_{args.num_layers}_lss_{args.layer_size}_iid_{args.image_id}_ni_{args.num_iters}_risidual'
+else: 
+    args.logdir = f'risidual/nl_{args.num_layers}_lss_{args.layer_size}_iid_fulldataset_ni_{args.num_iters}_risidual'
 # Set up torch and cuda
 dtype = torch.float32
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.set_default_tensor_type('torch.cuda.FloatTensor' if torch.cuda.is_available() else 'torch.FloatTensor')
+print("device is "+device.type)
 
 # Set random seeds
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
+_,_,train_dataset,test_dataset = cifar10loader.loadcifar10()
 
 if args.full_dataset:
-    min_id, max_id = 1, 24  # Kodak dataset runs from kodim01.png to kodim24.png
+    min_id, max_id = 0, 1001-1  # Kodak dataset runs from kodim01.png to kodim24.png
 else:
     min_id, max_id = args.image_id, args.image_id
 
@@ -51,21 +58,22 @@ results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
     os.makedirs(args.logdir)
-input_pad_size = args.input_pad_size
+
+
 # Fit images
 for i in range(min_id, max_id + 1):
     print(f'Image {i}')
 
     # Load image
-    img = imageio.imread(f"kodak-dataset/kodim{str(i).zfill(2)}.png")
+    # img = cifar10loader.loadImageI(i,test_dataset).to(device, dtype)
+    img = imageio.imread(f"kodak-dataset/kodim{str(args.image_id).zfill(2)}.png")
     img = transforms.ToTensor()(img).float().to(device, dtype)
     # transform = transforms.Resize((256, 384))
     # img = transform(img)
-    print(img.shape)
 
     # Setup model
-    func_rep = Siren(
-        dim_in=2+input_pad_size,
+    func_rep = TimeSiren(
+        dim_in=8,
         dim_hidden=args.layer_size,
         dim_out=3,
         num_layers=args.num_layers,
@@ -76,12 +84,8 @@ for i in range(min_id, max_id + 1):
 
     # Set up training
     trainer = Trainer(func_rep, lr=args.learning_rate)
-    coordinates, features = util.to_coordinates_and_features(img)
-    coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
-    if input_pad_size > 0: 
-        pad = normalize_log2_scale(1.0)
-        pad = pad.expand(coordinates.shape[0],input_pad_size)
-        coordinates = torch.cat([coordinates,pad],dim=-1)
+    # coordinates, features = util.to_coordinates_and_features(img)
+    # coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
     model_size = util.model_size_in_bits(func_rep) / 8000.
@@ -90,22 +94,9 @@ for i in range(min_id, max_id + 1):
     print(f'Full precision bpp: {fp_bpp:.2f}')
 
     # Train model in full precision
-    
-    start_time = time.time()
-    trainer.train(coordinates, features, num_iters=args.num_iters)
-    # trainer.train_with_maml_2(img,0,500,2,8192,16384,10)
-    # trainer.train_with_correction_net(coordinates, features, num_iters=args.num_iters,img=img,correction_cycles=1000)
-    # trainer.train_in_dct(img,coordinates,features,args.num_iters)
-    # trainer.train_in_fft_and_rgb(img,coordinates,features,args.num_iters)
-    # trainer.train_with_laplacian_pyramid(img,coordinates,features,args.num_iters)
-    # trainer.coarse_to_fine_grained_training(img,args.num_iters,5000,5000)
-   
-    #{"fp_bpp": [0.608642578125], "hp_bpp": [0.3043212890625], "fp_psnr": [24.78053569793701], "hp_psnr": [24.72663402557373]}
+    # trainer.train(coordinates, features, num_iters=args.num_iters)
+    trainer.time_dependent_train(img,num_iters=args.num_iters)
     print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
-    end_time = time.time() 
-    elapsed_seconds = end_time - start_time
-    elapsed_minutes = elapsed_seconds / 60.0
-    print("Execution time: {:.2f} minutes".format(elapsed_minutes))
 
     # Log full precision results
     results['fp_bpp'].append(fp_bpp)
@@ -119,14 +110,23 @@ for i in range(min_id, max_id + 1):
 
     # Save full precision image reconstruction
     with torch.no_grad():
-        img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+        
+        img_recon,preds = risidual_prediction(func_rep,[1,2,3],img)
+        img_recon = img_recon.reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+    
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
+        pred_i = 0 
+        for p in preds:
+            p = p.reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+            save_image(torch.clamp(p, 0, 1).to('cpu'), args.logdir + f'/fp_pred_{i}_{pred_i}.png')
+            pred_i +=1
+
 
     # Convert model and coordinates to half precision. Note that half precision
     # torch.sin is only implemented on GPU, so must use cuda
     if torch.cuda.is_available():
         func_rep = func_rep.half().to('cuda')
-        coordinates = coordinates.half().to('cuda')
+        # coordinates = coordinates.half().to('cuda')
 
         # Calculate model size in half precision
         hp_bpp = util.bpp(model=func_rep, image=img)
@@ -135,11 +135,19 @@ for i in range(min_id, max_id + 1):
 
         # Compute image reconstruction and PSNR
         with torch.no_grad():
-            img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1).float()
+            # img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1).float()
+            img_recon,preds = risidual_prediction_with_half_coords(func_rep,[1,2,3],img)
+            img_recon = img_recon.reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
             hp_psnr = util.get_clamped_psnr(img_recon, img)
             save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/hp_reconstruction_{i}.png')
             print(f'Half precision psnr: {hp_psnr:.2f}')
             results['hp_psnr'].append(hp_psnr)
+            pred_i = 0 
+            for p in preds:
+                p = p.reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
+                save_image(torch.clamp(p, 0, 1).to('cpu'), args.logdir + f'/hp_prediction_{i}_{pred_i}.png')
+                pred_i +=1
+
     else:
         results['hp_bpp'].append(fp_bpp)
         results['hp_psnr'].append(0.0)

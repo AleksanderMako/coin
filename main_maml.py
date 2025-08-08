@@ -12,10 +12,10 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from training import Trainer
 import time
-from training import normalize_log2_scale
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/normal_procedure/ni_5k_lss28_nl10_iid5 -se 3456
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/ni_5k_lss28_nl9_iid5 -se 3456 -ips 2
+from training import maml_train
+from training import train_from_starting_point,maml_adaptation,normalize_log2_scale
 
+#python main_maml.py -ni 1500 -lss 28 -nl 10 -iid 14 -ld maml_training_with_scale/outer1k_tasks345_lss28_nl10_iid14 -mosteps 1000 -mt 3,4,5 -misteps 3
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
 parser.add_argument("-ni", "--num_iters", help="Number of iterations to train for", type=int, default=50000)
@@ -27,7 +27,10 @@ parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", 
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
 parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
-parser.add_argument("-ips", "--input_pad_size", help="input pad size", type=int, default=0)
+parser.add_argument("-misteps", "--meta_inner_steps", help="maml inner loop steps.", type=int, default=5)
+parser.add_argument("-mosteps", "--meta_outer_steps", help="maml outer loop steps.", type=int, default=500)
+parser.add_argument("-mt", "--meta_tasks", help="maml tasks.", type=str, default="1,2,3")
+parser.add_argument("-rs", "--refine_steps", help="number of steps to take during high res refinenemnt.", type=int, default=10)
 
 args = parser.parse_args()
 
@@ -40,6 +43,10 @@ torch.set_default_tensor_type('torch.cuda.FloatTensor' if torch.cuda.is_availabl
 torch.manual_seed(args.seed)
 torch.cuda.manual_seed_all(args.seed)
 
+img_ids = [int (i) for i in args.meta_tasks.split(",")]
+
+
+
 if args.full_dataset:
     min_id, max_id = 1, 24  # Kodak dataset runs from kodim01.png to kodim24.png
 else:
@@ -51,21 +58,43 @@ results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
     os.makedirs(args.logdir)
-input_pad_size = args.input_pad_size
+
 # Fit images
 for i in range(min_id, max_id + 1):
     print(f'Image {i}')
 
+    maml_images = []
+    for iid in img_ids:
+        task_img = imageio.imread(f"kodak-dataset/kodim{str(iid).zfill(2)}.png")
+        task_img = transforms.ToTensor()(task_img).float().to(device, dtype)
+        maml_images.append(task_img)
+
     # Load image
     img = imageio.imread(f"kodak-dataset/kodim{str(i).zfill(2)}.png")
     img = transforms.ToTensor()(img).float().to(device, dtype)
+
+
     # transform = transforms.Resize((256, 384))
     # img = transform(img)
     print(img.shape)
+    base_model = Siren(
+        dim_in=3,
+        dim_hidden=args.layer_size,
+        dim_out=3,
+        num_layers=args.num_layers,
+        final_activation=torch.nn.Identity(),
+        w0_initial=args.w0_initial,
+        w0=args.w0
+    ).to(device)
+
+    best_model = maml_train(base_model,maml_images,torch.nn.MSELoss(),1e-2,args.meta_inner_steps,1e-3,args.meta_outer_steps)
+    model_id = f"model_tasts-{args.meta_tasks}_innersteps-{args.meta_inner_steps}_outersteps-{args.meta_outer_steps}_innerlr-{1e-2}_outerlr-{1e-3}"
+    torch.save(best_model, args.logdir + f'/best_model_{model_id}.pt')
+    
 
     # Setup model
     func_rep = Siren(
-        dim_in=2+input_pad_size,
+        dim_in=3,
         dim_hidden=args.layer_size,
         dim_out=3,
         num_layers=args.num_layers,
@@ -75,13 +104,16 @@ for i in range(min_id, max_id + 1):
     ).to(device)
 
     # Set up training
+
+    ##load starting point 
+    func_rep.load_state_dict(best_model)
     trainer = Trainer(func_rep, lr=args.learning_rate)
     coordinates, features = util.to_coordinates_and_features(img)
+    scale = normalize_log2_scale(1.0)
+    scale = scale.expand(coordinates.shape[0],1)
+    coordinates = torch.cat([coordinates,scale],dim=-1)
+
     coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
-    if input_pad_size > 0: 
-        pad = normalize_log2_scale(1.0)
-        pad = pad.expand(coordinates.shape[0],input_pad_size)
-        coordinates = torch.cat([coordinates,pad],dim=-1)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
     model_size = util.model_size_in_bits(func_rep) / 8000.
@@ -92,35 +124,34 @@ for i in range(min_id, max_id + 1):
     # Train model in full precision
     
     start_time = time.time()
-    trainer.train(coordinates, features, num_iters=args.num_iters)
-    # trainer.train_with_maml_2(img,0,500,2,8192,16384,10)
-    # trainer.train_with_correction_net(coordinates, features, num_iters=args.num_iters,img=img,correction_cycles=1000)
-    # trainer.train_in_dct(img,coordinates,features,args.num_iters)
-    # trainer.train_in_fft_and_rgb(img,coordinates,features,args.num_iters)
-    # trainer.train_with_laplacian_pyramid(img,coordinates,features,args.num_iters)
-    # trainer.coarse_to_fine_grained_training(img,args.num_iters,5000,5000)
+    # trainer.train(coordinates, features, num_iters=args.num_iters,img=img)
+    weights,pred = maml_adaptation(func_rep,img,1.0,torch.nn.MSELoss(),1e-2,args.meta_inner_steps)
+    func_rep.load_state_dict(weights)
+  
+
    
-    #{"fp_bpp": [0.608642578125], "hp_bpp": [0.3043212890625], "fp_psnr": [24.78053569793701], "hp_psnr": [24.72663402557373]}
-    print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
+    # print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
     end_time = time.time() 
     elapsed_seconds = end_time - start_time
     elapsed_minutes = elapsed_seconds / 60.0
-    print("Execution time: {:.2f} minutes".format(elapsed_minutes))
+    print("Execution time for starting point learning: {:.2f} minutes".format(elapsed_minutes))
 
     # Log full precision results
     results['fp_bpp'].append(fp_bpp)
     results['fp_psnr'].append(trainer.best_vals['psnr'])
 
     # Save best model
-    torch.save(trainer.best_model, args.logdir + f'/best_model_{i}.pt')
+    # torch.save(trainer.best_model, args.logdir + f'/best_model_{i}.pt')
 
     # Update current model to be best model
-    func_rep.load_state_dict(trainer.best_model)
+    # func_rep.load_state_dict(trainer.best_model)
 
     # Save full precision image reconstruction
     with torch.no_grad():
         img_recon = func_rep(coordinates).reshape(img.shape[1], img.shape[2], 3).permute(2, 0, 1)
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
+        fp_psnr = util.get_clamped_psnr(img_recon, img)
+        print(f'Full precision psnr: {fp_psnr:.2f}')
 
     # Convert model and coordinates to half precision. Note that half precision
     # torch.sin is only implemented on GPU, so must use cuda

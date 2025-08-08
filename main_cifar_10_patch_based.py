@@ -11,6 +11,7 @@ from torchvision import transforms
 from torchvision.utils import save_image
 from training import Trainer
 import cifar10loader 
+import time
 
 # python main_cifar.py -ld cifar_10_full_dataset -fd -nl 5 -lss 20 -ni 250
 #python main_cifar.py -ld cifar_10_nl5_lss28_ni3000 -iid 3  -nl 5 -lss 22 -ni 3000
@@ -27,10 +28,10 @@ parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=fl
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
 
 args = parser.parse_args()
-if not args.full_dataset:
-    args.logdir = f'nl_{args.num_layers}_lss_{args.layer_size}_iid_{args.image_id}_ni_{args.num_iters}'
-else: 
-    args.logdir = f'nl_{args.num_layers}_lss_{args.layer_size}_iid_fulldataset_ni_{args.num_iters}'
+# if not args.full_dataset:
+#     args.logdir = f'nl_{args.num_layers}_lss_{args.layer_size}_iid_{args.image_id}_ni_{args.num_iters}'
+# else: 
+#     args.logdir = f'nl_{args.num_layers}_lss_{args.layer_size}_iid_fulldataset_ni_{args.num_iters}'
 # Set up torch and cuda
 dtype = torch.float32
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -60,14 +61,15 @@ for i in range(min_id, max_id + 1):
     print(f'Image {i}')
 
     # Load image
-    img = cifar10loader.loadImageI(i,test_dataset).to(device, dtype)
+    img = imageio.imread(f"kodak-dataset/kodim{str(i).zfill(2)}.png")
+    img = transforms.ToTensor()(img).float().to(device, dtype)
      #torch.Size([3, 512, 768])
 
     # Setup model
     func_rep = Siren(
         dim_in=2,
         dim_hidden=args.layer_size,
-        dim_out=27,
+        dim_out=192,
         num_layers=args.num_layers,
         final_activation=torch.nn.Identity(),
         w0_initial=args.w0_initial,
@@ -76,7 +78,7 @@ for i in range(min_id, max_id + 1):
 
     # Set up training
     trainer = Trainer(func_rep, lr=args.learning_rate)
-    coordinates, features = util.to_patch_coordinates_and_features(img,3)
+    coordinates, features = util.to_patch_coordinates_and_features(img,8)
     coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
@@ -86,8 +88,14 @@ for i in range(min_id, max_id + 1):
     print(f'Full precision bpp: {fp_bpp:.2f}')
 
     # Train model in full precision
+    start_time = time.time()
     trainer.train(coordinates, features, num_iters=args.num_iters)
     print(f'Best training psnr: {trainer.best_vals["psnr"]:.2f}')
+    end_time = time.time() 
+    elapsed_seconds = end_time - start_time
+    elapsed_minutes = elapsed_seconds / 60.0
+    print("Execution time: {:.2f} minutes".format(elapsed_minutes))
+
 
     # Log full precision results
     results['fp_bpp'].append(fp_bpp)
@@ -101,7 +109,7 @@ for i in range(min_id, max_id + 1):
 
     # Save full precision image reconstruction
     with torch.no_grad():
-        img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,3)
+        img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,8)
         save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/fp_reconstruction_{i}.png')
 
     # Convert model and coordinates to half precision. Note that half precision
@@ -117,7 +125,7 @@ for i in range(min_id, max_id + 1):
 
         # Compute image reconstruction and PSNR
         with torch.no_grad():
-            img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,3)
+            img_recon = util.reconstruct_from_patches(func_rep(coordinates),img.shape,8)
             hp_psnr = util.get_clamped_psnr(img_recon, img)
             save_image(torch.clamp(img_recon, 0, 1).to('cpu'), args.logdir + f'/hp_reconstruction_{i}.png')
             print(f'Half precision psnr: {hp_psnr:.2f}')

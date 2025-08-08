@@ -13,8 +13,8 @@ from torchvision.utils import save_image
 from training import Trainer
 import time
 from training import normalize_log2_scale
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/normal_procedure/ni_5k_lss28_nl10_iid5 -se 3456
-#python main.py -ni 5000 -lss 28 -nl 10 -iid 5 -ld train_with_const_padding/ni_5k_lss28_nl9_iid5 -se 3456 -ips 2
+
+#python main_scale_aware.py -ni 5000 -lss 25 -nl 10 -iid 14 -ld scale_aware/ni_5k_lss25_nl10_iid14 -se 123
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-ld", "--logdir", help="Path to save logs", default=f"/tmp/{getpass.getuser()}")
@@ -27,7 +27,6 @@ parser.add_argument("-lss", "--layer_size", help="Layer sizes as list of ints", 
 parser.add_argument("-nl", "--num_layers", help="Number of layers", type=int, default=10)
 parser.add_argument("-w0", "--w0", help="w0 parameter for SIREN model.", type=float, default=30.0)
 parser.add_argument("-w0i", "--w0_initial", help="w0 parameter for first layer of SIREN model.", type=float, default=30.0)
-parser.add_argument("-ips", "--input_pad_size", help="input pad size", type=int, default=0)
 
 args = parser.parse_args()
 
@@ -51,7 +50,7 @@ results = {'fp_bpp': [], 'hp_bpp': [], 'fp_psnr': [], 'hp_psnr': []}
 # Create directory to store experiments
 if not os.path.exists(args.logdir):
     os.makedirs(args.logdir)
-input_pad_size = args.input_pad_size
+
 # Fit images
 for i in range(min_id, max_id + 1):
     print(f'Image {i}')
@@ -65,7 +64,7 @@ for i in range(min_id, max_id + 1):
 
     # Setup model
     func_rep = Siren(
-        dim_in=2+input_pad_size,
+        dim_in=10,
         dim_hidden=args.layer_size,
         dim_out=3,
         num_layers=args.num_layers,
@@ -73,15 +72,15 @@ for i in range(min_id, max_id + 1):
         w0_initial=args.w0_initial,
         w0=args.w0
     ).to(device)
+    
 
     # Set up training
     trainer = Trainer(func_rep, lr=args.learning_rate)
     coordinates, features = util.to_coordinates_and_features(img)
+    scale = normalize_log2_scale(1.0)
+    scale = scale.expand(coordinates.shape[0],8)
+    coordinates = torch.cat([coordinates,scale],dim=-1)
     coordinates, features = coordinates.to(device, dtype), features.to(device, dtype)
-    if input_pad_size > 0: 
-        pad = normalize_log2_scale(1.0)
-        pad = pad.expand(coordinates.shape[0],input_pad_size)
-        coordinates = torch.cat([coordinates,pad],dim=-1)
 
     # Calculate model size. Divide by 8000 to go from bits to kB
     model_size = util.model_size_in_bits(func_rep) / 8000.
@@ -92,7 +91,7 @@ for i in range(min_id, max_id + 1):
     # Train model in full precision
     
     start_time = time.time()
-    trainer.train(coordinates, features, num_iters=args.num_iters)
+    trainer.train_with_scale(coordinates, features, total_iterations=args.num_iters,img=img)
     # trainer.train_with_maml_2(img,0,500,2,8192,16384,10)
     # trainer.train_with_correction_net(coordinates, features, num_iters=args.num_iters,img=img,correction_cycles=1000)
     # trainer.train_in_dct(img,coordinates,features,args.num_iters)
