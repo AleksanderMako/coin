@@ -27,6 +27,8 @@ parser.add_argument("--w0_initial", type=float, default=30.0)
 parser.add_argument("--target_psnr", type=float, default=0.0, help="stop once reached (0 = never)")
 parser.add_argument("--max_seconds", type=float, default=0.0, help="stop after this many seconds (0 = never)")
 parser.add_argument("--lm_damping", type=float, default=1e-3)
+parser.add_argument("--lm_schedule", choices=["nielsen", "simple"], default="nielsen")
+parser.add_argument("--warmup_iters", type=int, default=0, help="Adam steps before Levenberg–Marquardt")
 parser.add_argument("--lm_scaling", choices=["marquardt", "identity"], default="marquardt")
 parser.add_argument("--chunk", type=int, default=8192)
 parser.add_argument("--seed", type=int, default=0)
@@ -99,10 +101,21 @@ if args.optimizer == "adam":
             if should_stop(t, psnr):
                 break
 else:
-    opt = LevenbergMarquardt(model, damping=args.lm_damping, chunk_size=args.chunk, scaling=args.lm_scaling)
+    if args.warmup_iters:
+        warm = torch.optim.Adam(model.parameters(), lr=args.lr)
+        for i in range(args.warmup_iters):
+            warm.zero_grad()
+            pred = model(coords)
+            loss = torch.nn.functional.mse_loss(pred, feats)
+            loss.backward()
+            warm.step()
+            record(time.perf_counter() - start, loss.item(), util.get_clamped_psnr(feats, pred.detach()))
+    log["lm_start_step"] = len(log["t"])
+    opt = LevenbergMarquardt(model, damping=args.lm_damping, chunk_size=args.chunk,
+                             scaling=args.lm_scaling, schedule=args.lm_schedule)
     log.update(damping=[], accepted=[], retries=[])
     mse, psnr = evaluate(model)
-    record(0.0, mse, psnr)
+    record(time.perf_counter() - start, mse, psnr)
     with tqdm.trange(args.num_iters, ncols=100) as bar:
         for i in bar:
             info = opt.step(coords, feats)

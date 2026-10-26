@@ -13,8 +13,10 @@ from torch.func import functional_call, jacrev, vmap
 class LevenbergMarquardt:
     def __init__(self, model, damping=1e-3, damping_up=10.0, damping_down=0.1,
                  min_damping=1e-10, max_damping=1e10, chunk_size=8192,
-                 scaling="marquardt", max_retries=15):
+                 scaling="marquardt", max_retries=15, schedule="nielsen"):
         self.model = model
+        self.schedule = schedule
+        self.nu = 2.0  # Nielsen's growth factor, doubles on every rejected step
         self.names = [n for n, _ in model.named_parameters()]
         self.shapes = [p.shape for _, p in model.named_parameters()]
         self.numels = [p.numel() for _, p in model.named_parameters()]
@@ -73,10 +75,22 @@ class LevenbergMarquardt:
         return JtJ, Jtr, sq
 
     def solve(self, JtJ, Jtr, D, lam):
-        # Solve in float64; on a CPU-only or Metal machine do it on the CPU.
+        """Solve (JtJ + lam * diag(D)) delta = -Jtr.
+
+        Tries float32 on the device after symmetric Jacobi scaling, which tames the
+        conditioning; falls back to float64 when the solve residual is poor."""
+        A = JtJ + lam * torch.diag(D)
+        s = torch.rsqrt(torch.diagonal(A).clamp_min(1e-30))
+        As = A * s[:, None] * s[None, :]
+        L, info = torch.linalg.cholesky_ex(As)
+        if info.item() == 0:
+            delta = torch.cholesky_solve((-Jtr * s).unsqueeze(1), L).squeeze(1) * s
+            residual = (A @ delta + Jtr).norm() / Jtr.norm().clamp_min(1e-30)
+            if torch.isfinite(delta).all() and residual < 1e-3:
+                return delta
         dev = JtJ.device if JtJ.device.type == "cuda" else torch.device("cpu")
-        A = JtJ.to(dev, torch.float64) + lam * torch.diag(D.to(dev, torch.float64))
-        L, info = torch.linalg.cholesky_ex(A)
+        A64 = A.to(dev, torch.float64)
+        L, info = torch.linalg.cholesky_ex(A64)
         if info.item() != 0:
             return None
         delta = torch.cholesky_solve(-Jtr.to(dev, torch.float64).unsqueeze(1), L).squeeze(1)
@@ -97,12 +111,25 @@ class LevenbergMarquardt:
             if delta is not None and torch.isfinite(delta).all():
                 new_flat = flat + delta
                 new_sq = self.sum_squares(new_flat, coords, feats)
+                # Reduction the quadratic model predicts for half the sum of squares.
+                predicted = 0.5 * torch.dot(delta, self.damping * D * delta - Jtr).item()
+                actual = 0.5 * (sq - new_sq).item()
+                rho = actual / predicted if predicted > 0 else -1.0
                 if new_sq < sq:
                     self.write_params(new_flat)
                     info.update(accepted=True, loss_after=new_sq.item(), damping=self.damping,
-                                step_norm=delta.norm().item(), retries=attempt)
-                    self.damping = max(self.damping * self.down, self.min_damping)
+                                step_norm=delta.norm().item(), retries=attempt, gain_ratio=rho)
+                    if self.schedule == "nielsen":
+                        self.damping *= max(1.0 / 3.0, 1.0 - (2.0 * rho - 1.0) ** 3)
+                        self.nu = 2.0
+                    else:
+                        self.damping *= self.down
+                    self.damping = min(max(self.damping, self.min_damping), self.max_damping)
                     return info
-            self.damping = min(self.damping * self.up, self.max_damping)
+            if self.schedule == "nielsen":
+                self.damping = min(self.damping * self.nu, self.max_damping)
+                self.nu *= 2.0
+            else:
+                self.damping = min(self.damping * self.up, self.max_damping)
         info.update(loss_after=sq.item(), damping=self.damping, retries=self.max_retries)
         return info
