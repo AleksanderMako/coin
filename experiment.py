@@ -17,7 +17,8 @@ from siren import Siren
 parser = argparse.ArgumentParser()
 parser.add_argument("--image", type=int, default=1)
 parser.add_argument("--crop", type=int, default=2, help="1 = full image, 2 = half crop, 4 = quarter crop")
-parser.add_argument("--optimizer", choices=["adam", "lm"], default="adam")
+parser.add_argument("--optimizer", choices=["adam", "lm", "lbfgs"], default="adam")
+parser.add_argument("--history", type=int, default=20, help="L-BFGS history size")
 parser.add_argument("--num_iters", type=int, default=50000)
 parser.add_argument("--lr", type=float, default=2e-4)
 parser.add_argument("--layer_size", type=int, default=28)
@@ -28,7 +29,7 @@ parser.add_argument("--target_psnr", type=float, default=0.0, help="stop once re
 parser.add_argument("--max_seconds", type=float, default=0.0, help="stop after this many seconds (0 = never)")
 parser.add_argument("--lm_damping", type=float, default=1e-3)
 parser.add_argument("--lm_schedule", choices=["nielsen", "simple"], default="nielsen")
-parser.add_argument("--warmup_iters", type=int, default=0, help="Adam steps before Levenberg–Marquardt")
+parser.add_argument("--warmup_iters", type=int, default=0, help="Adam steps before L-BFGS or Levenberg–Marquardt")
 parser.add_argument("--lm_scaling", choices=["marquardt", "identity"], default="marquardt")
 parser.add_argument("--chunk", type=int, default=8192)
 parser.add_argument("--seed", type=int, default=0)
@@ -80,6 +81,18 @@ def should_stop(t, psnr):
     return (args.target_psnr and psnr >= args.target_psnr) or (args.max_seconds and t >= args.max_seconds)
 
 
+def adam_warmup(n):
+    """A few Adam steps so a second-order method starts inside a sensible basin."""
+    warm = torch.optim.Adam(model.parameters(), lr=args.lr)
+    for _ in range(n):
+        warm.zero_grad()
+        pred = model(coords)
+        loss = torch.nn.functional.mse_loss(pred, feats)
+        loss.backward()
+        warm.step()
+        record(time.perf_counter() - start, loss.item(), util.get_clamped_psnr(feats, pred.detach()))
+
+
 sync()
 start = time.perf_counter()
 if args.optimizer == "adam":
@@ -100,16 +113,35 @@ if args.optimizer == "adam":
                 bar.set_postfix(loss=f"{mse:.2e}", psnr=f"{psnr:.2f}", best=f"{best['psnr']:.2f}")
             if should_stop(t, psnr):
                 break
+elif args.optimizer == "lbfgs":
+    adam_warmup(args.warmup_iters)
+    log["lm_start_step"] = len(log["t"])
+    # One L-BFGS iteration per call so every iteration gets a timestamp; the
+    # history and line-search state carry over between calls.
+    opt = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=1, history_size=args.history,
+                            line_search_fn="strong_wolfe", tolerance_grad=0.0, tolerance_change=0.0)
+
+    def closure():
+        opt.zero_grad()
+        loss = torch.nn.functional.mse_loss(model(coords), feats)
+        loss.backward()
+        return loss
+
+    with tqdm.trange(args.num_iters, ncols=100) as bar:
+        for i in bar:
+            opt.step(closure)
+            mse, psnr = evaluate(model)
+            t = time.perf_counter() - start
+            if not (mse == mse):
+                print("loss is not a number, stopping")
+                break
+            record(t, mse, psnr)
+            if i % 20 == 0:
+                bar.set_postfix(loss=f"{mse:.2e}", psnr=f"{psnr:.2f}", best=f"{best['psnr']:.2f}", t=f"{t:.0f}s")
+            if should_stop(t, psnr):
+                break
 else:
-    if args.warmup_iters:
-        warm = torch.optim.Adam(model.parameters(), lr=args.lr)
-        for i in range(args.warmup_iters):
-            warm.zero_grad()
-            pred = model(coords)
-            loss = torch.nn.functional.mse_loss(pred, feats)
-            loss.backward()
-            warm.step()
-            record(time.perf_counter() - start, loss.item(), util.get_clamped_psnr(feats, pred.detach()))
+    adam_warmup(args.warmup_iters)
     log["lm_start_step"] = len(log["t"])
     opt = LevenbergMarquardt(model, damping=args.lm_damping, chunk_size=args.chunk,
                              scaling=args.lm_scaling, schedule=args.lm_schedule)
