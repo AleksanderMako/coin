@@ -34,6 +34,7 @@ p.add_argument("--seed", type=int, default=0)
 p.add_argument("--init", default="", help="resume from this start")
 p.add_argument("--out", required=True, help="path of the saved start, e.g. runs/reptile_adam.pt")
 p.add_argument("--snapshot_every", type=int, default=10)
+p.add_argument("--tag", default="", help="unused; lets launch.py match the output file")
 args = p.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -1,6 +1,8 @@
 """Curvature of the mean squared error at the current weights, from Hessian-vector products only.
 
-top_eigenvalue: power iteration, the sharpness in the edge-of-stability sense.
+top_eigenvalue: the largest positive Hessian eigenvalue (the sharpness in the edge-of-stability
+sense) by power iteration. Early in a fit the eigenvalue of largest magnitude can be negative, so
+if the first pass lands on one, a second pass runs on the Hessian shifted up by that magnitude.
 hessian_trace: Hutchinson estimate with Rademacher probes, the average curvature times the parameter count.
 Neither touches the weights or their .grad fields.
 """
@@ -34,21 +36,29 @@ def hessian_trace(model, coords, feats, probes=8, seed=1234):
     return total / probes
 
 
-def top_eigenvalue(model, coords, feats, iters=20, seed=1234):
-    """Largest-magnitude Hessian eigenvalue by power iteration (Rayleigh quotient at the last iterate)."""
-    if iters <= 0:
-        return None
-    params, grads = _loss_and_grads(model, coords, feats)
-    g = torch.Generator(device=coords.device).manual_seed(seed)
+def _power(params, grads, iters, shift, seed):
+    """Rayleigh quotient of the largest-magnitude eigenvalue of (H + shift * I)."""
+    g = torch.Generator(device=params[0].device).manual_seed(seed)
     vs = [torch.randn(p.shape, device=p.device, generator=g) for p in params]
     norm = torch.sqrt(_dot(vs, vs))
     vs = [v / norm for v in vs]
     lam = 0.0
     for _ in range(iters):
-        hv = _hvp(params, grads, vs)
+        hv = [h + shift * v for h, v in zip(_hvp(params, grads, vs), vs)]
         lam = _dot(hv, vs).item()
         norm = torch.sqrt(_dot(hv, hv))
         if norm.item() == 0.0:
             break
         vs = [h / norm for h in hv]
     return lam
+
+
+def top_eigenvalue(model, coords, feats, iters=20, seed=1234):
+    if iters <= 0:
+        return None
+    params, grads = _loss_and_grads(model, coords, feats)
+    lam = _power(params, grads, iters, 0.0, seed)
+    if lam >= 0:
+        return lam
+    shift = -lam
+    return _power(params, grads, 2 * iters, shift, seed) - shift
