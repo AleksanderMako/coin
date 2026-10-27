@@ -150,7 +150,9 @@ series = [("base_lbfgs_cold_im{}", "cold L-BFGS, random start", "grey", "-"),
           ("ladam_lbfgs_cold_im{}", "L-BFGS from Adam-trained start", "C2", "--"),
           ("llbfgs_lbfgs_cold_im{}", "L-BFGS from L-BFGS-trained start", "C2", "-"),
           ("llbfgs_adam_im{}", "Adam from L-BFGS-trained start", "C1", "-"),
-          ("llbfgsmore_lbfgs_cold_im{}", "L-BFGS from longer-trained start", "C4", "-")]
+          ("sol_lbfgs_cold_im{}", "L-BFGS, output layer solved, no training data", "C5", "-"),
+          ("sol_adam_im{}", "Adam, output layer solved", "C5", "--"),
+          ("frz_lbfgs_im{}", "L-BFGS from learned start, first layer frozen", "C4", ":")]
 fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True)
 for ax, im in zip(axes.flat, TEST):
     for pat, label, color, style in series:
@@ -166,8 +168,8 @@ for ax, im in zip(axes.flat, TEST):
         ax.set_ylabel("quality (dB)")
     if im in (14, 20, 23):
         ax.set_xlabel("seconds (A40)")
-axes[0, 0].legend(fontsize=6)
-fig.suptitle("Quality against seconds: learned starts against random starts, same card", fontsize=10)
+axes[0, 0].legend(fontsize=5.5, loc="lower right")
+fig.suptitle("Quality against seconds: learned, solved and random starts, same card (A40)", fontsize=10)
 fig.tight_layout()
 fig.savefig(os.path.join(out, "fig4_learned_start.png"), dpi=130)
 print("figures written to", out)
