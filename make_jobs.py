@@ -22,6 +22,7 @@ p.add_argument("--learned_seconds", type=int, default=360)
 p.add_argument("--rhos", type=float, nargs="+", default=[0.001, 0.002, 0.005, 0.01, 0.02])
 p.add_argument("--sam_lrs", type=float, nargs="+", default=[2e-5, 2e-4])
 p.add_argument("--epochs", type=int, default=30)
+p.add_argument("--more_epochs", type=int, nargs=2, default=[30, 60], help="extra Reptile epochs for the adam and lbfgs inner loops")
 p.add_argument("--out", default="jobs")
 args = p.parse_args()
 os.makedirs(args.out, exist_ok=True)
@@ -88,3 +89,15 @@ for which, inner in (("adam", "--inner adam --inner_steps 500"), ("lbfgs", "--in
         jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 "
                     f"--max_seconds {args.learned_seconds} --init {init} --tag l{which}_adam_im{im}")
     write(f"reptile_{which}.txt", jobs)
+
+# continued meta-training (the epoch curve was still climbing at thirty), then re-tests from the longer-trained start
+for (which, inner), more in zip((("adam", "--inner adam --inner_steps 500"), ("lbfgs", "--inner lbfgs --inner_steps 100")), args.more_epochs):
+    init, out = f"runs/reptile_{which}.pt", f"runs/reptile_{which}_more.pt"
+    jobs = [f"python reptile.py --images {imgs} {inner} --epochs {more} --meta_lr 0.5 --init {init} --out {out} "
+            f"--tag reptile_{which}_more"]
+    for im in args.test_images:
+        jobs.append(f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 "
+                    f"--max_seconds {args.learned_seconds} --init {out} --tag l{which}more_lbfgs_cold_im{im}")
+        jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 "
+                    f"--max_seconds {args.learned_seconds} --init {out} --tag l{which}more_adam_im{im}")
+    write(f"reptile_{which}_more.txt", jobs)
