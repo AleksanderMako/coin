@@ -14,6 +14,7 @@ import os
 p = argparse.ArgumentParser()
 p.add_argument("--gd_lrs", type=float, nargs="+", required=True)
 p.add_argument("--adam_lrs", type=float, nargs="+", default=[1e-4, 2e-4, 5e-4])
+p.add_argument("--adam_extra_lrs", type=float, nargs="+", default=[1e-3, 2e-3], help="larger Adam rates, run after the main sweep")
 p.add_argument("--sweep_images", type=int, nargs="+", default=[1, 5, 8, 14, 20, 23])
 p.add_argument("--test_images", type=int, nargs="+", default=[1, 5, 8, 14, 20, 23])
 p.add_argument("--sweep_iters", type=int, default=50000)
@@ -48,6 +49,13 @@ for n, im in enumerate(args.sweep_images):
                     f"--sharpness_every 500 --tag s_adam_lr{lr:g}_im{im}")
 write("sweep_1.txt", sweep[1])
 write("sweep_2.txt", sweep[2])
+extra = {1: [], 2: []}
+for n, im in enumerate(args.sweep_images):
+    for lr in args.adam_extra_lrs:
+        extra[1 + n % 2].append(f"{E} --image {im} --crop 2 --optimizer adam --lr {lr:g} --num_iters {args.sweep_iters} "
+                                f"--sharpness_every 500 --tag s_adam_lr{lr:g}_im{im}")
+write("sweep_extra_1.txt", extra[1])
+write("sweep_extra_2.txt", extra[2])
 
 # flat-seeking finish from the saved seed-zero fits (links five and seven), short, then the timed second seed
 jobs = []
