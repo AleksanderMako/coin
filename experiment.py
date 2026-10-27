@@ -1,5 +1,9 @@
 """Fit one Kodak crop with one optimiser, log quality against wall-clock seconds,
-then measure quality after rounding the weights. Writes one JSON per run."""
+then measure quality after rounding the weights. Writes one JSON per run.
+
+Optional pieces: a learned or saved starting point (--init), sharpness logged along the way
+(--sharpness_every), and a flat-seeking finishing phase after the main fit (--sam_steps).
+"""
 import argparse
 import json
 import os
@@ -12,12 +16,14 @@ import tqdm
 import util
 from crops import load_crop
 from lm import LevenbergMarquardt
+from rounding import rounding_table
+from sharpness import hessian_trace, top_eigenvalue
 from siren import Siren
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--image", type=int, default=1)
 parser.add_argument("--crop", type=int, default=2, help="1 = full image, 2 = half crop, 4 = quarter crop")
-parser.add_argument("--optimizer", choices=["adam", "lm", "lbfgs"], default="adam")
+parser.add_argument("--optimizer", choices=["adam", "gd", "lm", "lbfgs"], default="adam")
 parser.add_argument("--history", type=int, default=20, help="L-BFGS history size")
 parser.add_argument("--num_iters", type=int, default=50000)
 parser.add_argument("--lr", type=float, default=2e-4)
@@ -34,6 +40,12 @@ parser.add_argument("--lm_scaling", choices=["marquardt", "identity"], default="
 parser.add_argument("--chunk", type=int, default=8192)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--probes", type=int, default=8, help="Hutchinson probes for the Hessian trace")
+parser.add_argument("--power_iters", type=int, default=20, help="power iterations for the top eigenvalue")
+parser.add_argument("--sharpness_every", type=int, default=0, help="log sharpness every N steps (0 = end only)")
+parser.add_argument("--init", default="", help="start from these saved weights instead of the random init")
+parser.add_argument("--sam_steps", type=int, default=0, help="flat-seeking finishing steps after the main fit")
+parser.add_argument("--sam_rho", type=float, default=0.05, help="perturbation radius as a fraction of each tensor's norm")
+parser.add_argument("--sam_lr", type=float, default=0.0, help="Adam learning rate for the finish (0 = --lr)")
 parser.add_argument("--out", default="runs")
 parser.add_argument("--tag", default="")
 args = parser.parse_args()
@@ -44,12 +56,22 @@ if device.type == "cuda":
     torch.cuda.manual_seed_all(args.seed)
 
 img, coords, feats = load_crop(args.image, args.crop, device)
-model = Siren(dim_in=2, dim_hidden=args.layer_size, dim_out=3, num_layers=args.num_layers,
-              final_activation=torch.nn.Identity(), w0_initial=args.w0_initial, w0=args.w0).to(device)
+
+
+def build():
+    return Siren(dim_in=2, dim_hidden=args.layer_size, dim_out=3, num_layers=args.num_layers,
+                 final_activation=torch.nn.Identity(), w0_initial=args.w0_initial, w0=args.w0).to(device)
+
+
+model = build()
+if args.init:
+    model.load_state_dict(torch.load(args.init, map_location=device))
 num_params = sum(p.numel() for p in model.parameters())
 bpp = util.bpp(model=model, image=img)
 print(f"image {args.image} crop 1/{args.crop}: {tuple(img.shape)} pixels={coords.shape[0]} "
-      f"params={num_params} bpp(fp32)={bpp:.3f} bpp(fp16)={bpp / 2:.3f} device={device}")
+      f"params={num_params} bpp(fp32)={bpp:.3f} bpp(fp16)={bpp / 2:.3f} device={device} init={args.init or 'random'}")
+
+mse_loss = torch.nn.functional.mse_loss
 
 
 def sync():
@@ -60,12 +82,20 @@ def sync():
 @torch.no_grad()
 def evaluate(m):
     pred = m(coords)
-    mse = torch.nn.functional.mse_loss(pred, feats).item()
-    return mse, util.get_clamped_psnr(feats, pred)
+    return mse_loss(pred, feats).item(), util.get_clamped_psnr(feats, pred)
 
 
-log = {"t": [], "loss": [], "psnr": []}
+def snapshot():
+    return OrderedDict((k, v.detach().clone()) for k, v in model.state_dict().items())
+
+
+log = {"t": [], "loss": [], "psnr": [], "sharpness": []}
 best = {"psnr": -1.0, "state": None}
+paused = 0.0  # seconds spent measuring sharpness, not charged to the fit
+
+
+def clock():
+    return time.perf_counter() - start - paused
 
 
 def record(t, mse, psnr):
@@ -74,45 +104,68 @@ def record(t, mse, psnr):
     log["psnr"].append(psnr)
     if psnr > best["psnr"]:
         best["psnr"] = psnr
-        best["state"] = OrderedDict((k, v.detach().clone()) for k, v in model.state_dict().items())
+        best["state"] = snapshot()
 
 
 def should_stop(t, psnr):
     return (args.target_psnr and psnr >= args.target_psnr) or (args.max_seconds and t >= args.max_seconds)
 
 
-def adam_warmup(n):
-    """A few Adam steps so a second-order method starts inside a sensible basin."""
-    warm = torch.optim.Adam(model.parameters(), lr=args.lr)
-    for _ in range(n):
-        warm.zero_grad()
-        pred = model(coords)
-        loss = torch.nn.functional.mse_loss(pred, feats)
-        loss.backward()
-        warm.step()
-        record(time.perf_counter() - start, loss.item(), util.get_clamped_psnr(feats, pred.detach()))
+def measure_sharpness(step):
+    global paused
+    sync()
+    t0 = time.perf_counter()
+    lam = top_eigenvalue(model, coords, feats, args.power_iters)
+    tr = hessian_trace(model, coords, feats, args.probes)
+    sync()
+    paused += time.perf_counter() - t0
+    log["sharpness"].append({"step": step, "t": clock(), "lambda_max": lam, "trace": tr})
 
 
-sync()
-start = time.perf_counter()
-if args.optimizer == "adam":
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    loss_fn = torch.nn.MSELoss()
-    with tqdm.trange(args.num_iters, ncols=100) as bar:
+def maybe_measure(i):
+    if args.sharpness_every and i % args.sharpness_every == 0:
+        measure_sharpness(len(log["t"]))
+
+
+def first_order_loop(opt, n, label):
+    """Adam or plain gradient descent. Returns True if the loss stopped being finite."""
+    with tqdm.trange(n, ncols=100, desc=label) as bar:
         for i in bar:
+            maybe_measure(i)
             opt.zero_grad()
             pred = model(coords)
-            loss = loss_fn(pred, feats)
+            loss = mse_loss(pred, feats)
             loss.backward()
             opt.step()
             mse = loss.item()  # synchronises the device
+            if not (mse == mse) or mse == float("inf"):
+                print(f"{label}: loss is not finite at step {i}, stopping")
+                return True
             psnr = util.get_clamped_psnr(feats, pred.detach())
-            t = time.perf_counter() - start
+            t = clock()
             record(t, mse, psnr)
             if i % 50 == 0:
                 bar.set_postfix(loss=f"{mse:.2e}", psnr=f"{psnr:.2f}", best=f"{best['psnr']:.2f}")
             if should_stop(t, psnr):
                 break
+    return False
+
+
+def adam_warmup(n):
+    """A few Adam steps so a second-order method starts inside a sensible basin."""
+    if n > 0:
+        first_order_loop(torch.optim.Adam(model.parameters(), lr=args.lr), n, "warm-up")
+
+
+sync()
+start = time.perf_counter()
+mse0, psnr0 = evaluate(model)
+record(0.0, mse0, psnr0)  # the starting point, so a finish-only run (num_iters 0) still has a state
+diverged = False
+if args.optimizer in ("adam", "gd"):
+    opt = (torch.optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == "adam"
+           else torch.optim.SGD(model.parameters(), lr=args.lr))
+    diverged = first_order_loop(opt, args.num_iters, args.optimizer)
 elif args.optimizer == "lbfgs":
     adam_warmup(args.warmup_iters)
     log["lm_start_step"] = len(log["t"])
@@ -123,17 +176,19 @@ elif args.optimizer == "lbfgs":
 
     def closure():
         opt.zero_grad()
-        loss = torch.nn.functional.mse_loss(model(coords), feats)
+        loss = mse_loss(model(coords), feats)
         loss.backward()
         return loss
 
-    with tqdm.trange(args.num_iters, ncols=100) as bar:
+    with tqdm.trange(args.num_iters, ncols=100, desc="lbfgs") as bar:
         for i in bar:
+            maybe_measure(i)
             opt.step(closure)
             mse, psnr = evaluate(model)
-            t = time.perf_counter() - start
+            t = clock()
             if not (mse == mse):
                 print("loss is not a number, stopping")
+                diverged = True
                 break
             record(t, mse, psnr)
             if i % 20 == 0:
@@ -146,13 +201,11 @@ else:
     opt = LevenbergMarquardt(model, damping=args.lm_damping, chunk_size=args.chunk,
                              scaling=args.lm_scaling, schedule=args.lm_schedule)
     log.update(damping=[], accepted=[], retries=[])
-    mse, psnr = evaluate(model)
-    record(time.perf_counter() - start, mse, psnr)
-    with tqdm.trange(args.num_iters, ncols=100) as bar:
+    with tqdm.trange(args.num_iters, ncols=100, desc="lm") as bar:
         for i in bar:
             info = opt.step(coords, feats)
             sync()
-            t = time.perf_counter() - start
+            t = clock()
             mse = info["loss_after"] / feats.numel()
             _, psnr = evaluate(model)
             record(t, mse, psnr)
@@ -166,50 +219,61 @@ else:
             if not info["accepted"] and opt.damping >= opt.max_damping:
                 print("damping saturated, stopping")
                 break
-total_time = time.perf_counter() - start
+fit_seconds = clock()
+psnr_before_finish = best["psnr"]
 
-# --- quality after rounding the weights ---------------------------------------
+# --- flat-seeking finish: gradient taken at the worst nearby point, applied at the original weights ---
+if args.sam_steps > 0:
+    model.load_state_dict(best["state"])
+    params = list(model.parameters())
+    finish = torch.optim.Adam(params, lr=args.sam_lr or args.lr)
+    log["sam_start_step"] = len(log["t"])
+    with tqdm.trange(args.sam_steps, ncols=100, desc="finish") as bar:
+        for i in bar:
+            maybe_measure(i)
+            finish.zero_grad()
+            pred = model(coords)
+            loss = mse_loss(pred, feats)
+            loss.backward()
+            eps = []
+            with torch.no_grad():
+                for p in params:
+                    # radius scaled by the tensor's own size, so the large first layer is not under-perturbed
+                    e = p.grad * (args.sam_rho * p.norm() / (p.grad.norm() + 1e-12))
+                    p.add_(e)
+                    eps.append(e)
+            finish.zero_grad()
+            mse_loss(model(coords), feats).backward()
+            with torch.no_grad():
+                for p, e in zip(params, eps):
+                    p.sub_(e)
+            finish.step()
+            mse = loss.item()
+            psnr = util.get_clamped_psnr(feats, pred.detach())
+            log["t"].append(clock())
+            log["loss"].append(mse)
+            log["psnr"].append(psnr)
+            if i % 20 == 0:
+                bar.set_postfix(loss=f"{mse:.2e}", psnr=f"{psnr:.2f}")
+    # the finished point is the one we evaluate, even if it sits a little below the best fit
+    best["state"] = snapshot()
+    best["psnr"] = evaluate(model)[1]
+total_time = clock()
+
+# --- quality after rounding the weights, and the curvature at the evaluated point ---
 model.load_state_dict(best["state"])
 final_mse, final_psnr = evaluate(model)
 
 
-def quantise_uniform(state, bits):
-    levels = 2 ** (bits - 1) - 1
-    out = OrderedDict()
-    for k, w in state.items():
-        scale = w.abs().max().clamp_min(1e-12)
-        out[k] = torch.round(w / scale * levels) * scale / levels
-    return out
-
-
 def psnr_with(state):
-    m = Siren(dim_in=2, dim_hidden=args.layer_size, dim_out=3, num_layers=args.num_layers,
-              final_activation=torch.nn.Identity(), w0_initial=args.w0_initial, w0=args.w0).to(device)
+    m = build()
     m.load_state_dict(state)
     return evaluate(m)[1]
 
 
-quant = {"fp32": final_psnr,
-         "fp16_cast": psnr_with(OrderedDict((k, v.half().float()) for k, v in best["state"].items()))}
-for bits in (16, 12, 10, 8):
-    quant[f"uniform{bits}"] = psnr_with(quantise_uniform(best["state"], bits))
-
-
-# --- sharpness: Hessian trace of the mean squared error by Hutchinson probing ---
-def hessian_trace(probes):
-    params = [p for p in model.parameters()]
-    loss = torch.nn.functional.mse_loss(model(coords), feats)
-    grads = torch.autograd.grad(loss, params, create_graph=True)
-    total = 0.0
-    g = torch.Generator(device=device).manual_seed(1234)
-    for _ in range(probes):
-        vs = [torch.randint(0, 2, p.shape, device=device, generator=g).float() * 2 - 1 for p in params]
-        hv = torch.autograd.grad(grads, params, grad_outputs=vs, retain_graph=True)
-        total += sum((h * v).sum().item() for h, v in zip(hv, vs))
-    return total / probes
-
-
-trace = hessian_trace(args.probes) if args.probes > 0 else None
+quant = rounding_table(best["state"], psnr_with)
+trace = hessian_trace(model, coords, feats, args.probes)
+lam_max = top_eigenvalue(model, coords, feats, args.power_iters)
 
 
 def time_to(threshold):
@@ -220,18 +284,23 @@ def time_to(threshold):
 
 
 summary = {
-    "config": vars(args), "device": str(device), "pixels": coords.shape[0], "params": num_params,
+    "config": vars(args), "device": str(device),
+    "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
+    "pixels": coords.shape[0], "params": num_params,
     "bpp_fp32": bpp, "bpp_fp16": bpp / 2, "steps": len(log["t"]), "seconds": total_time,
+    "fit_seconds": fit_seconds, "sharpness_seconds": paused, "diverged": diverged,
     "final_psnr": final_psnr, "final_mse": final_mse, "best_psnr": best["psnr"],
+    "psnr_before_finish": psnr_before_finish,
     "time_to_psnr": {str(th): time_to(th) for th in (22, 24, 26, 28, 30, 32, 34, 36)},
-    "psnr_after_rounding": quant, "hessian_trace": trace, "log": log,
+    "psnr_after_rounding": quant, "hessian_trace": trace, "lambda_max": lam_max, "log": log,
 }
 os.makedirs(args.out, exist_ok=True)
 tag = args.tag or f"im{args.image:02d}_crop{args.crop}_{args.optimizer}_L{args.num_layers}x{args.layer_size}"
 with open(os.path.join(args.out, tag + ".json"), "w") as f:
     json.dump(summary, f)
 torch.save(best["state"], os.path.join(args.out, tag + ".pt"))
-print(f"\n{tag}: {len(log['t'])} steps in {total_time:.1f}s, psnr {final_psnr:.2f}")
+print(f"\n{tag}: {len(log['t'])} steps in {total_time:.1f}s, psnr {final_psnr:.2f}"
+      + (f" (before finish {psnr_before_finish:.2f})" if args.sam_steps else "") + (" DIVERGED" if diverged else ""))
 print("time to psnr:", {k: (f"{v:.1f}s" if v is not None else "-") for k, v in summary["time_to_psnr"].items()})
-print("after rounding:", {k: f"{v:.2f}" for k, v in quant.items()})
-print(f"hessian trace: {trace}")
+print("after rounding:", {k: f"{v:.2f}" for k, v in quant.items() if "first16" not in k})
+print(f"hessian trace: {trace}, top eigenvalue: {lam_max}")
