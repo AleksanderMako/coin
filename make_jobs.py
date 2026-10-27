@@ -122,3 +122,12 @@ for label, init in (("learned", "runs/reptile_lbfgs.pt"), ("random", "")):
                         f"--max_seconds {args.learned_seconds} {'--init ' + init if init else ''} --precond {pre}_{kind}.pt "
                         f"--tag pre_{label}_{kind}_lbfgs_cold_im{im}")
 write("precond.txt", jobs)
+
+# tail check: does L-BFGS pull ahead of Adam from the learned start when the budget is twenty minutes, not six
+jobs = []
+for im in (1, 23):
+    jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 200000 --max_seconds 1200 "
+                f"--init runs/reptile_lbfgs.pt --tag tail_adam_im{im}")
+    jobs.append(f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 200000 "
+                f"--max_seconds 1200 --init runs/reptile_lbfgs.pt --tag tail_lbfgs_im{im}")
+write("tail.txt", jobs)
