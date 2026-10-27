@@ -46,6 +46,8 @@ parser.add_argument("--init", default="", help="start from these saved weights i
 parser.add_argument("--sam_steps", type=int, default=0, help="flat-seeking finishing steps after the main fit")
 parser.add_argument("--sam_rho", type=float, default=0.05, help="perturbation radius as a fraction of each tensor's norm")
 parser.add_argument("--sam_lr", type=float, default=0.0, help="Adam learning rate for the finish (0 = --lr)")
+parser.add_argument("--solve_last", action="store_true", help="set the output layer by least squares at the start (and after the warm-up)")
+parser.add_argument("--resolve_every", type=int, default=0, help="re-solve the output layer every N first-order steps (0 = never)")
 parser.add_argument("--freeze_first", action="store_true", help="keep the first layer at its starting values; only the rest is fitted")
 parser.add_argument("--precond", default="", help="L-BFGS only: per-weight scales (a state dict); the solver works on weight / scale")
 parser.add_argument("--out", default="runs")
@@ -96,6 +98,19 @@ def snapshot():
     return OrderedDict((k, v.detach().clone()) for k, v in model.state_dict().items())
 
 
+@torch.no_grad()
+def solve_last_layer(ridge=1e-6):
+    """The output layer is linear in its weights, so for the current hidden features it has a closed form:
+    least squares of the pixel colours on the features plus a constant, a 29 by 29 solve."""
+    h = model.net(coords)
+    a = torch.cat([h, torch.ones(h.shape[0], 1, device=device)], dim=1)
+    ata = a.T @ a
+    ata += ridge * ata.diagonal().mean() * torch.eye(ata.shape[0], device=device)
+    sol = torch.linalg.solve(ata, a.T @ feats)  # (29, 3)
+    model.last_layer.linear.weight.copy_(sol[:-1].T)
+    model.last_layer.linear.bias.copy_(sol[-1])
+
+
 log = {"t": [], "loss": [], "psnr": [], "sharpness": []}
 best = {"psnr": -1.0, "state": None}
 paused = 0.0  # seconds spent measuring sharpness, not charged to the fit
@@ -139,6 +154,8 @@ def first_order_loop(opt, n, label):
     with tqdm.trange(n, ncols=100, desc=label) as bar:
         for i in bar:
             maybe_measure(i)
+            if args.resolve_every and i > 0 and i % args.resolve_every == 0:
+                solve_last_layer()
             opt.zero_grad()
             pred = model(coords)
             loss = mse_loss(pred, feats)
@@ -162,10 +179,14 @@ def adam_warmup(n):
     """A few Adam steps so a second-order method starts inside a sensible basin."""
     if n > 0:
         first_order_loop(torch.optim.Adam(trainable, lr=args.lr), n, "warm-up")
+        if args.solve_last:
+            solve_last_layer()
 
 
 sync()
 start = time.perf_counter()
+if args.solve_last:
+    solve_last_layer()
 mse0, psnr0 = evaluate(model)
 record(0.0, mse0, psnr0)  # the starting point, so a finish-only run (num_iters 0) still has a state
 diverged = False

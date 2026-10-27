@@ -138,3 +138,14 @@ jobs = [f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 --max_sec
 jobs += [f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds {args.learned_seconds} "
          f"--init runs/reptile_lbfgs.pt --freeze_first --tag frz_lbfgs_im{im}" for im in args.test_images]
 write("freeze.txt", jobs)
+
+# closed-form output layer: solved once at the start, or re-solved every five hundred steps; random start, same budgets
+jobs = []
+for im in args.test_images:
+    jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 --max_seconds {args.learned_seconds} "
+                f"--solve_last --tag sol_adam_im{im}")
+    jobs.append(f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 "
+                f"--max_seconds {args.learned_seconds} --solve_last --tag sol_lbfgs_cold_im{im}")
+    jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 --max_seconds {args.learned_seconds} "
+                f"--solve_last --resolve_every 500 --tag sol_adam_resolve_im{im}")
+write("solve.txt", jobs)
