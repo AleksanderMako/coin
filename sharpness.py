@@ -10,7 +10,7 @@ import torch
 
 
 def _loss_and_grads(model, coords, feats):
-    params = [p for p in model.parameters()]
+    params = [p for p in model.parameters() if p.requires_grad]  # frozen layers are not part of the landscape
     loss = torch.nn.functional.mse_loss(model(coords), feats)
     grads = torch.autograd.grad(loss, params, create_graph=True)
     return params, grads

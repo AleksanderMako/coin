@@ -46,6 +46,7 @@ parser.add_argument("--init", default="", help="start from these saved weights i
 parser.add_argument("--sam_steps", type=int, default=0, help="flat-seeking finishing steps after the main fit")
 parser.add_argument("--sam_rho", type=float, default=0.05, help="perturbation radius as a fraction of each tensor's norm")
 parser.add_argument("--sam_lr", type=float, default=0.0, help="Adam learning rate for the finish (0 = --lr)")
+parser.add_argument("--freeze_first", action="store_true", help="keep the first layer at its starting values; only the rest is fitted")
 parser.add_argument("--precond", default="", help="L-BFGS only: per-weight scales (a state dict); the solver works on weight / scale")
 parser.add_argument("--out", default="runs")
 parser.add_argument("--tag", default="")
@@ -67,6 +68,11 @@ def build():
 model = build()
 if args.init:
     model.load_state_dict(torch.load(args.init, map_location=device))
+if args.freeze_first:
+    for n, p in model.named_parameters():
+        if n.startswith("net.0."):
+            p.requires_grad_(False)
+trainable = [p for p in model.parameters() if p.requires_grad]
 num_params = sum(p.numel() for p in model.parameters())
 bpp = util.bpp(model=model, image=img)
 print(f"image {args.image} crop 1/{args.crop}: {tuple(img.shape)} pixels={coords.shape[0]} "
@@ -155,7 +161,7 @@ def first_order_loop(opt, n, label):
 def adam_warmup(n):
     """A few Adam steps so a second-order method starts inside a sensible basin."""
     if n > 0:
-        first_order_loop(torch.optim.Adam(model.parameters(), lr=args.lr), n, "warm-up")
+        first_order_loop(torch.optim.Adam(trainable, lr=args.lr), n, "warm-up")
 
 
 sync()
@@ -164,20 +170,20 @@ mse0, psnr0 = evaluate(model)
 record(0.0, mse0, psnr0)  # the starting point, so a finish-only run (num_iters 0) still has a state
 diverged = False
 if args.optimizer in ("adam", "gd"):
-    opt = (torch.optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == "adam"
-           else torch.optim.SGD(model.parameters(), lr=args.lr))
+    opt = (torch.optim.Adam(trainable, lr=args.lr) if args.optimizer == "adam"
+           else torch.optim.SGD(trainable, lr=args.lr))
     diverged = first_order_loop(opt, args.num_iters, args.optimizer)
 elif args.optimizer == "lbfgs":
     adam_warmup(args.warmup_iters)
     log["lm_start_step"] = len(log["t"])
     # One L-BFGS iteration per call so every iteration gets a timestamp; the
     # history and line-search state carry over between calls.
-    params = list(model.parameters())
+    params = trainable
     if args.precond:
         # Diagonal preconditioning by reparameterisation: the solver sees phi = weight / scale, so a
         # direction with large scale is a large move in weight space. Scales come from a learned file.
         scales = torch.load(args.precond, map_location=device)
-        scale = [scales[n].to(device).expand_as(p).contiguous() for n, p in model.named_parameters()]
+        scale = [scales[n].to(device).expand_as(p).contiguous() for n, p in model.named_parameters() if p.requires_grad]
         phi = [(p.detach() / s).clone().requires_grad_(True) for p, s in zip(params, scale)]
         opt_params = phi
     else:
@@ -248,7 +254,7 @@ psnr_before_finish = best["psnr"]
 # --- flat-seeking finish: gradient taken at the worst nearby point, applied at the original weights ---
 if args.sam_steps > 0:
     model.load_state_dict(best["state"])
-    params = list(model.parameters())
+    params = trainable
     finish = torch.optim.Adam(params, lr=args.sam_lr or args.lr)
     log["sam_start_step"] = len(log["t"])
     with tqdm.trange(args.sam_steps, ncols=100, desc="finish") as bar:

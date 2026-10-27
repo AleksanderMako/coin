@@ -131,3 +131,10 @@ for im in (1, 23):
     jobs.append(f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 200000 "
                 f"--max_seconds 1200 --init runs/reptile_lbfgs.pt --tag tail_lbfgs_im{im}")
 write("tail.txt", jobs)
+
+# first layer held fixed at the learned start's values (the decoder could keep it as a constant): what does the fit lose
+jobs = [f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 --max_seconds {args.learned_seconds} "
+        f"--init runs/reptile_lbfgs.pt --freeze_first --tag frz_adam_im{im}" for im in args.test_images]
+jobs += [f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds {args.learned_seconds} "
+         f"--init runs/reptile_lbfgs.pt --freeze_first --tag frz_lbfgs_im{im}" for im in args.test_images]
+write("freeze.txt", jobs)
