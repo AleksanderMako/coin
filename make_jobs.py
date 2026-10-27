@@ -19,7 +19,7 @@ p.add_argument("--test_images", type=int, nargs="+", default=[1, 5, 8, 14, 20, 2
 p.add_argument("--sweep_iters", type=int, default=50000)
 p.add_argument("--lbfgs_seconds", type=int, default=600)
 p.add_argument("--learned_seconds", type=int, default=360)
-p.add_argument("--rhos", type=float, nargs="+", default=[0.005, 0.01, 0.02])
+p.add_argument("--rhos", type=float, nargs="+", default=[0.001, 0.002, 0.005, 0.01, 0.02])
 p.add_argument("--sam_lrs", type=float, nargs="+", default=[2e-5, 2e-4])
 p.add_argument("--epochs", type=int, default=30)
 p.add_argument("--out", default="jobs")
