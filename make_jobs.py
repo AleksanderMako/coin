@@ -109,3 +109,16 @@ for (which, inner), more in zip((("adam", "--inner adam --inner_steps 500"), ("l
         jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 "
                     f"--max_seconds {args.learned_seconds} --init {out} --tag l{which}more_adam_im{im}")
     write(f"reptile_{which}_more.txt", jobs)
+
+# question three: a learned diagonal preconditioner for L-BFGS, measured at the L-BFGS-trained start and at the
+# random start, then timed cold L-BFGS fits from the matching start on the test images
+jobs = []
+for label, init in (("learned", "runs/reptile_lbfgs.pt"), ("random", "")):
+    pre = f"runs/precond_{label}"
+    jobs.append(f"python precond.py --images {imgs} --probes 64 {'--init ' + init if init else ''} --out {pre} --tag precond_{label}")
+    for kind in ("elem", "tensor"):
+        for im in args.test_images:
+            jobs.append(f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 "
+                        f"--max_seconds {args.learned_seconds} {'--init ' + init if init else ''} --precond {pre}_{kind}.pt "
+                        f"--tag pre_{label}_{kind}_lbfgs_cold_im{im}")
+write("precond.txt", jobs)

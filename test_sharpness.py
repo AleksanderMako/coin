@@ -142,3 +142,24 @@ with tempfile.TemporaryDirectory() as d:
         os.remove(os.path.join(d, "t.json"))
     print(f"5. reptile moved the start by {moved:.3g} (sum abs); experiment.py ran gd, finish-only and lbfgs from it")
 print("all checks passed")
+
+# 6. preconditioned L-BFGS: all-ones scales reproduce the plain run exactly; learned scales run and improve the loss
+with tempfile.TemporaryDirectory() as d:
+    common = [sys.executable, "experiment.py", "--image", "1", "--crop", "8", "--layer_size", "8", "--num_layers", "3",
+              "--optimizer", "lbfgs", "--num_iters", "40", "--out", d, "--probes", "2", "--power_iters", "5"]
+    r = subprocess.run(common + ["--tag", "plain"], capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    torch.manual_seed(0)
+    ones = OrderedDict((k, torch.ones_like(v)) for k, v in Siren(2, 8, 3, 3, final_activation=torch.nn.Identity()).state_dict().items())
+    torch.save(ones, os.path.join(d, "ones.pt"))
+    r = subprocess.run(common + ["--tag", "ones", "--precond", os.path.join(d, "ones.pt")], capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, "precond.py", "--images", "1", "2", "--crop", "8", "--probes", "8", "--layer_size", "8",
+                        "--num_layers", "3", "--out", os.path.join(d, "pre"), "--tag", "x"], capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run(common + ["--tag", "pre", "--precond", os.path.join(d, "pre_tensor.pt")], capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run(common + ["--tag", "pre_elem", "--precond", os.path.join(d, "pre_elem.pt")], capture_output=True, text=True); assert r.returncode == 0, r.stdout + r.stderr
+    import json
+    plain, ones_r, pre = (json.load(open(os.path.join(d, t + ".json"))) for t in ("plain", "ones", "pre"))
+    assert abs(plain["final_psnr"] - ones_r["final_psnr"]) < 1e-3, (plain["final_psnr"], ones_r["final_psnr"])
+    assert pre["final_psnr"] == pre["final_psnr"] and pre["final_psnr"] > pre["log"]["psnr"][0]
+    print(f"6. preconditioned lbfgs: plain {plain['final_psnr']:.3f} dB, all-ones scales {ones_r['final_psnr']:.3f} dB (same), "
+          f"learned scales run: {pre['log']['psnr'][0]:.2f} -> {pre['final_psnr']:.2f} dB (whether they help is the experiment)")
+print("all checks passed")

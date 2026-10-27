@@ -46,6 +46,7 @@ parser.add_argument("--init", default="", help="start from these saved weights i
 parser.add_argument("--sam_steps", type=int, default=0, help="flat-seeking finishing steps after the main fit")
 parser.add_argument("--sam_rho", type=float, default=0.05, help="perturbation radius as a fraction of each tensor's norm")
 parser.add_argument("--sam_lr", type=float, default=0.0, help="Adam learning rate for the finish (0 = --lr)")
+parser.add_argument("--precond", default="", help="L-BFGS only: per-weight scales (a state dict); the solver works on weight / scale")
 parser.add_argument("--out", default="runs")
 parser.add_argument("--tag", default="")
 args = parser.parse_args()
@@ -171,19 +172,41 @@ elif args.optimizer == "lbfgs":
     log["lm_start_step"] = len(log["t"])
     # One L-BFGS iteration per call so every iteration gets a timestamp; the
     # history and line-search state carry over between calls.
-    opt = torch.optim.LBFGS(model.parameters(), lr=1.0, max_iter=1, history_size=args.history,
+    params = list(model.parameters())
+    if args.precond:
+        # Diagonal preconditioning by reparameterisation: the solver sees phi = weight / scale, so a
+        # direction with large scale is a large move in weight space. Scales come from a learned file.
+        scales = torch.load(args.precond, map_location=device)
+        scale = [scales[n].to(device).expand_as(p).contiguous() for n, p in model.named_parameters()]
+        phi = [(p.detach() / s).clone().requires_grad_(True) for p, s in zip(params, scale)]
+        opt_params = phi
+    else:
+        opt_params = params
+    opt = torch.optim.LBFGS(opt_params, lr=1.0, max_iter=1, history_size=args.history,
                             line_search_fn="strong_wolfe", tolerance_grad=0.0, tolerance_change=0.0)
+
+    def sync_weights():
+        if args.precond:
+            with torch.no_grad():
+                for p, f, s in zip(params, phi, scale):
+                    p.copy_(f * s)
 
     def closure():
         opt.zero_grad()
+        model.zero_grad()  # with --precond the solver holds phi, so the weights' own grads must be cleared too
+        sync_weights()
         loss = mse_loss(model(coords), feats)
         loss.backward()
+        if args.precond:
+            for p, f, s in zip(params, phi, scale):
+                f.grad = p.grad * s
         return loss
 
     with tqdm.trange(args.num_iters, ncols=100, desc="lbfgs") as bar:
         for i in bar:
             maybe_measure(i)
             opt.step(closure)
+            sync_weights()
             mse, psnr = evaluate(model)
             t = clock()
             if not (mse == mse):
