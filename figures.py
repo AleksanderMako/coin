@@ -28,6 +28,13 @@ TEST = [1, 5, 8, 14, 20, 23]
 BITS = [16, 12, 10, 8]
 
 
+def exploded(d):
+    """A fit that blew up without producing a not-a-number: useless weights, do not plot as a flat fit."""
+    along = [x["lambda_max"] for x in d["log"].get("sharpness", []) if x["lambda_max"] is not None]
+    return (d["diverged"] or d["final_psnr"] < 10 or (d["lambda_max"] is not None and d["lambda_max"] > 1e6)
+            or (along and max(along) > 1e6) or d["log"]["psnr"][-1] < d["best_psnr"] - 5)
+
+
 def psnr_at(d, t):
     log = d["log"]
     i = np.searchsorted(log["t"], t, side="right")
@@ -49,7 +56,7 @@ if sweep:
                 s = d["log"]["sharpness"]
                 color = plt.cm.viridis(k / max(len(ds) - 1, 1))
                 ax.plot([x["step"] for x in s], [x["lambda_max"] for x in s], color=color,
-                        label=f"lr {lr:g}" + (" (diverged)" if d["diverged"] else ""), linewidth=1.2)
+                        label=f"lr {lr:g}" + (" (diverged)" if exploded(d) else ""), linewidth=1.2)
                 if opt == "gd":
                     ax.axhline(2 / lr, color=color, linestyle=":", linewidth=0.8)
             ax.set_yscale("log")
@@ -69,7 +76,7 @@ if sweep:
     for ax, key, title in ((axes[0], "uniform8", "per-tensor, all layers at 8 bits"),
                            (axes[1], "channel8_first16", "per-channel, first layer at 16 bits")):
         for opt, marker in (("gd", "o"), ("adam", "s")):
-            ds = [d for d in sweep if d["config"]["optimizer"] == opt and not d["diverged"]]
+            ds = [d for d in sweep if d["config"]["optimizer"] == opt and not exploded(d)]
             lrs = sorted({d["config"]["lr"] for d in ds})
             for k, lr in enumerate(lrs):
                 pts = [(d["lambda_max"], d["psnr_after_rounding"]["fp32"] - d["psnr_after_rounding"][key])
