@@ -19,7 +19,8 @@ p.add_argument("--test_images", type=int, nargs="+", default=[1, 5, 8, 14, 20, 2
 p.add_argument("--sweep_iters", type=int, default=50000)
 p.add_argument("--lbfgs_seconds", type=int, default=600)
 p.add_argument("--learned_seconds", type=int, default=360)
-p.add_argument("--rhos", type=float, nargs="+", default=[0.02, 0.1])
+p.add_argument("--rhos", type=float, nargs="+", default=[0.005, 0.01, 0.02])
+p.add_argument("--sam_lrs", type=float, nargs="+", default=[2e-5, 2e-4])
 p.add_argument("--epochs", type=int, default=30)
 p.add_argument("--out", default="jobs")
 args = p.parse_args()
@@ -55,8 +56,11 @@ saved = {1: ("f_adam_im1", "f_lbfgs_im1"), 8: ("f_adam_im8", "f_lbfgs_im8"), 23:
 for im, tags in saved.items():
     for src in tags:
         for rho in args.rhos:
-            jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 0 --init runs/{src}.pt "
-                        f"--sam_steps 500 --sam_rho {rho:g} --sharpness_every 100 --tag fin_{src}_rho{rho:g}")
+            for lr in args.sam_lrs:
+                # the rho 0.02 at 2e-4 cell keeps its original tag so finished runs are reused
+                tag = f"fin_{src}_rho{rho:g}" if lr == 2e-4 else f"fin_{src}_rho{rho:g}_lr{lr:g}"
+                jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 0 --init runs/{src}.pt "
+                            f"--sam_steps 500 --sam_rho {rho:g} --sam_lr {lr:g} --sharpness_every 100 --tag {tag}")
         # control: the same five hundred Adam steps with no perturbation
         jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 500 --init runs/{src}.pt "
                     f"--sharpness_every 100 --tag fin_{src}_plain")
