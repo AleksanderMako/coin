@@ -149,3 +149,7 @@ for im in args.test_images:
     jobs.append(f"{E} --image {im} --crop 1 --optimizer adam --num_iters 50000 --max_seconds {args.learned_seconds} "
                 f"--solve_last --resolve_every 500 --tag sol_adam_resolve_im{im}")
 write("solve.txt", jobs)
+
+# cold L-BFGS from random on the same card as the learned-start fits (rerun; the first copies died with pod c)
+write("baselines.txt", [f"{E} --image {im} --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 "
+                        f"--max_seconds {args.learned_seconds} --tag base_lbfgs_cold_im{im}" for im in args.test_images])
