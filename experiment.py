@@ -1,4 +1,4 @@
-"""Fit one Kodak crop with one optimiser, log quality against wall-clock seconds,
+"""Fit one Kodak or DIV2K crop with one optimiser, log quality against wall-clock seconds,
 then measure quality after rounding the weights. Writes one JSON per run.
 
 Optional pieces: a learned or saved starting point (--init), sharpness logged along the way
@@ -14,13 +14,14 @@ import torch
 import tqdm
 
 import util
-from crops import load_crop
+from crops import load_image
 from lm import LevenbergMarquardt
 from rounding import rounding_table
 from sharpness import hessian_trace, top_eigenvalue
 from siren import Siren
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", choices=["kodak", "div2k"], default="kodak")
 parser.add_argument("--image", type=int, default=1)
 parser.add_argument("--crop", type=int, default=2, help="1 = full image, 2 = half crop, 4 = quarter crop")
 parser.add_argument("--optimizer", choices=["adam", "gd", "lm", "lbfgs"], default="adam")
@@ -59,7 +60,7 @@ torch.manual_seed(args.seed)
 if device.type == "cuda":
     torch.cuda.manual_seed_all(args.seed)
 
-img, coords, feats = load_crop(args.image, args.crop, device)
+img, coords, feats = load_image(args.dataset, args.image, args.crop, device)
 
 
 def build():
@@ -77,7 +78,7 @@ if args.freeze_first:
 trainable = [p for p in model.parameters() if p.requires_grad]
 num_params = sum(p.numel() for p in model.parameters())
 bpp = util.bpp(model=model, image=img)
-print(f"image {args.image} crop 1/{args.crop}: {tuple(img.shape)} pixels={coords.shape[0]} "
+print(f"{args.dataset} image {args.image} crop 1/{args.crop}: {tuple(img.shape)} pixels={coords.shape[0]} "
       f"params={num_params} bpp(fp32)={bpp:.3f} bpp(fp16)={bpp / 2:.3f} device={device} init={args.init or 'random'}")
 
 mse_loss = torch.nn.functional.mse_loss

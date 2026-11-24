@@ -1,0 +1,1 @@
+python qat.py --fit runs/fits/k_lbfgs_s1_im23 --rule good --bits 8 --lam 0.1 --iters 15000 --lr 2e-4 --probes 8 --power_iters 20 --sharpness_every 0 --tag d1_qat_ref --out runs

@@ -1,0 +1,12 @@
+python experiment.py --dataset kodak --image 1 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im1 --out runs
+python experiment.py --dataset kodak --image 1 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im1 --out runs
+python experiment.py --dataset kodak --image 5 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im5 --out runs
+python experiment.py --dataset kodak --image 5 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im5 --out runs
+python experiment.py --dataset kodak --image 9 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im9 --out runs
+python experiment.py --dataset kodak --image 9 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im9 --out runs
+python experiment.py --dataset kodak --image 13 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im13 --out runs
+python experiment.py --dataset kodak --image 13 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im13 --out runs
+python experiment.py --dataset kodak --image 17 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im17 --out runs
+python experiment.py --dataset kodak --image 17 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im17 --out runs
+python experiment.py --dataset kodak --image 21 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 500 --tag d1_adamfrz_s0_im21 --out runs
+python experiment.py --dataset kodak --image 21 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 360 --freeze_first --seed 0 --sharpness_every 50 --tag d1_lbfgsfrz_s0_im21 --out runs

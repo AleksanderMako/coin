@@ -1,0 +1,30 @@
+python experiment.py --dataset kodak --image 2 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im2 --out runs
+python experiment.py --dataset kodak --image 2 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im2 --out runs
+python experiment.py --dataset kodak --image 2 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im2 --out runs
+python experiment.py --dataset kodak --image 2 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im2 --out runs
+python experiment.py --dataset kodak --image 6 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im6 --out runs
+python experiment.py --dataset kodak --image 6 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im6 --out runs
+python experiment.py --dataset kodak --image 6 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im6 --out runs
+python experiment.py --dataset kodak --image 6 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im6 --out runs
+python experiment.py --dataset kodak --image 10 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im10 --out runs
+python experiment.py --dataset kodak --image 10 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im10 --out runs
+python experiment.py --dataset kodak --image 10 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im10 --out runs
+python experiment.py --dataset kodak --image 10 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im10 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 1 --sharpness_every 500 --tag d1_adamsol_s1_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 1 --sharpness_every 50 --tag d1_lbfgssol_s1_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --init runs/night1/reptile_lbfgs.pt --seed 0 --sharpness_every 500 --tag d1_adaminitlbfgs_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --init runs/night1/reptile_lbfgs.pt --seed 0 --sharpness_every 50 --tag d1_lbfgsinitlbfgs_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --init runs/night1/reptile_adam.pt --seed 0 --sharpness_every 500 --tag d1_adaminitadam_s0_im14 --out runs
+python experiment.py --dataset kodak --image 14 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --init runs/night1/reptile_adam.pt --seed 0 --sharpness_every 50 --tag d1_lbfgsinitadam_s0_im14 --out runs
+python experiment.py --dataset kodak --image 18 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im18 --out runs
+python experiment.py --dataset kodak --image 18 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im18 --out runs
+python experiment.py --dataset kodak --image 18 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im18 --out runs
+python experiment.py --dataset kodak --image 18 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im18 --out runs
+python experiment.py --dataset kodak --image 22 --crop 1 --optimizer adam --num_iters 50000 --seed 0 --sharpness_every 500 --tag d1_adam50k_s0_im22 --out runs
+python experiment.py --dataset kodak --image 22 --crop 1 --optimizer adam --num_iters 50000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 500 --tag d1_adamsol_s0_im22 --out runs
+python experiment.py --dataset kodak --image 22 --crop 1 --optimizer lbfgs --warmup_iters 500 --history 100 --num_iters 100000 --max_seconds 600 --seed 0 --sharpness_every 50 --tag d1_lbfgswarm_s0_im22 --out runs
+python experiment.py --dataset kodak --image 22 --crop 1 --optimizer lbfgs --warmup_iters 0 --history 100 --num_iters 100000 --max_seconds 600 --solve_last --seed 0 --sharpness_every 50 --tag d1_lbfgssol_s0_im22 --out runs
